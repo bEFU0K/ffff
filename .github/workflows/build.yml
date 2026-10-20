@@ -72,14 +72,32 @@ jobs:
           import glob, os, re
           ind = lambda l: len(l) - len(l.lstrip(' \t'))
 
-          # 1. дописываем aps-environment во все поддельные профили
-          for f in glob.glob('build-system/fake-codesigning/profiles/*'):
-              data = open(f, 'rb').read()
-              had = b'aps-environment' in data
-              new, n = re.subn(rb'(<key>Entitlements</key>\s*<dict>)', rb'\1<key>aps-environment</key><string>development</string>', data, count=1) if not had else (data, 0)
-              if n:
-                  open(f, 'wb').write(new)
-              print('profile', os.path.basename(f), 'had_aps' if had else ('patched' if n else 'NOT_PATCHED'))
+          # 1. перепаковываем профили (CMS/DER) с aps-environment
+          import subprocess, plistlib
+          subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', '/tmp/k.pem',
+                          '-out', '/tmp/c.pem', '-days', '3650', '-subj', '/CN=fake'], check=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          for f in sorted(glob.glob('build-system/fake-codesigning/profiles/*')):
+              name = os.path.basename(f)
+              r = subprocess.run(['openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in', f],
+                                 capture_output=True)
+              if r.returncode != 0:
+                  print('profile', name, 'READ_FAIL', r.stderr[:200]); continue
+              pl = plistlib.loads(r.stdout)
+              ent = pl.setdefault('Entitlements', {})
+              if 'aps-environment' in ent:
+                  print('profile', name, 'had_aps'); continue
+              ent['aps-environment'] = 'development'
+              open('/tmp/p.plist', 'wb').write(plistlib.dumps(pl))
+              w = subprocess.run(['openssl', 'smime', '-sign', '-signer', '/tmp/c.pem', '-inkey', '/tmp/k.pem',
+                                  '-binary', '-nodetach', '-outform', 'der', '-in', '/tmp/p.plist'],
+                                 capture_output=True)
+              if w.returncode != 0:
+                  print('profile', name, 'SIGN_FAIL', w.stderr[:200]); continue
+              open(f, 'wb').write(w.stdout)
+              chk = subprocess.run(['openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in', f],
+                                   capture_output=True)
+              print('profile', name, 'patched' if chk.returncode == 0 else 'BROKEN')
 
           # 2. обезвреживаем проверку в Make-скриптах
           MSG = 'Could not find a valid aps-environment'
@@ -133,8 +151,5 @@ jobs:
         with:
           name: AyuiOS
           path: |
-            AyuiOS.ipa
-            patch-report.txt
-
             AyuiOS.ipa
             patch-report.txt
