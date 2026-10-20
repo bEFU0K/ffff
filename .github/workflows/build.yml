@@ -89,39 +89,47 @@ jobs:
           print({k: v for k, v in cfg.items() if k != 'api_hash'})
           PY
 
-      - name: Fix codesigning (aps-environment)
+      - name: Fix codesigning (profiles + signing identity)
         run: |
           cd telegram
-          ls build-system/fake-codesigning/profiles || true
+          cat > /tmp/openssl.cnf << 'CNF'
+          [req]
+          distinguished_name = dn
+          x509_extensions = v3
+          prompt = no
+          [dn]
+          CN = GFPGRAM Fake Signing
+          [v3]
+          basicConstraints = critical,CA:false
+          keyUsage = critical,digitalSignature
+          extendedKeyUsage = critical,codeSigning
+          CNF
+          # сертификат A: им подписывается приложение (identity в keychain)
+          /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/k.pem -out /tmp/c.pem -days 3650 -config /tmp/openssl.cnf
+          /usr/bin/openssl x509 -in /tmp/c.pem -outform der -out /tmp/c.der
+          # сертификат B: только для обёртки профилей (CMS)
+          /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/k2.pem -out /tmp/c2.pem -days 3650 -subj "/CN=profile-signer"
           python3 - << 'PY'
-          import glob, os, re
+          import glob, os, re, subprocess, plistlib
           ind = lambda l: len(l) - len(l.lstrip(' \t'))
+          der = open('/tmp/c.der', 'rb').read()
 
-          # 1. перепаковываем профили (CMS/DER) с aps-environment
-          import subprocess, plistlib
-          subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', '/tmp/k.pem',
-                          '-out', '/tmp/c.pem', '-days', '3650', '-subj', '/CN=fake'], check=True,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          # 1. профили: aps-environment + наш сертификат в DeveloperCertificates
           for f in sorted(glob.glob('build-system/fake-codesigning/profiles/*')):
               name = os.path.basename(f)
-              r = subprocess.run(['openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in', f],
-                                 capture_output=True)
+              r = subprocess.run(['/usr/bin/openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in', f], capture_output=True)
               if r.returncode != 0:
                   print('profile', name, 'READ_FAIL', r.stderr[:200]); continue
               pl = plistlib.loads(r.stdout)
-              ent = pl.setdefault('Entitlements', {})
-              if 'aps-environment' in ent:
-                  print('profile', name, 'had_aps'); continue
-              ent['aps-environment'] = 'development'
+              pl.setdefault('Entitlements', {}).setdefault('aps-environment', 'development')
+              pl['DeveloperCertificates'] = [der]
               open('/tmp/p.plist', 'wb').write(plistlib.dumps(pl))
-              w = subprocess.run(['openssl', 'smime', '-sign', '-signer', '/tmp/c.pem', '-inkey', '/tmp/k.pem',
-                                  '-binary', '-nodetach', '-outform', 'der', '-in', '/tmp/p.plist'],
-                                 capture_output=True)
+              w = subprocess.run(['/usr/bin/openssl', 'smime', '-sign', '-signer', '/tmp/c2.pem', '-inkey', '/tmp/k2.pem',
+                                  '-binary', '-nodetach', '-outform', 'der', '-in', '/tmp/p.plist'], capture_output=True)
               if w.returncode != 0:
                   print('profile', name, 'SIGN_FAIL', w.stderr[:200]); continue
               open(f, 'wb').write(w.stdout)
-              chk = subprocess.run(['openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in', f],
-                                   capture_output=True)
+              chk = subprocess.run(['/usr/bin/openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in', f], capture_output=True)
               print('profile', name, 'patched' if chk.returncode == 0 else 'BROKEN')
 
           # 2. обезвреживаем проверку в Make-скриптах
@@ -156,6 +164,27 @@ jobs:
               done += 1
           print('make-check patched:', done)
           PY
+          # identity в keychain
+          /usr/bin/openssl pkcs12 -export -inkey /tmp/k.pem -in /tmp/c.pem -out /tmp/id.p12 -passout pass:gfp
+          security create-keychain -p gfp build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p gfp build.keychain
+          security import /tmp/id.p12 -k build.keychain -P gfp -T /usr/bin/codesign -T /usr/bin/security -A
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k gfp build.keychain
+          security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s build.keychain
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/c.pem || true
+          echo "--- identities (valid):"
+          security find-identity -v -p codesigning
+          echo "--- identities (all):"
+          security find-identity -p codesigning
+
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/bazel-cache
+          key: bazel-${{ github.run_id }}
+          restore-keys: bazel-
 
       - name: Build
         run: |
@@ -168,13 +197,25 @@ jobs:
             --buildNumber=100001 \
             --configuration=release_arm64
 
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/bazel-cache
+          key: bazel-${{ github.run_id }}
+
       - name: Collect ipa
-        run: cp telegram/bazel-bin/Telegram/Telegram.ipa AyuiOS.ipa
+        run: |
+          IPA=$(find telegram/bazel-bin -name "Telegram.ipa" 2>/dev/null | head -1)
+          echo "ipa: $IPA"
+          [ -n "$IPA" ] && cp "$IPA" AyuiOS.ipa || ls telegram/bazel-bin/Telegram || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
+          if-no-files-found: warn
           name: AyuiOS
           path: |
             AyuiOS.ipa
             patch-report.txt
+
