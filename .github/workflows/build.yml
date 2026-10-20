@@ -11,7 +11,7 @@ on:
         default: "master"
       runner:
         description: "macOS раннер"
-        default: "macos-15"
+        default: "macos-26"
       disable:
         description: "Патчи для отключения (через запятую): ghost-read,ghost-typing,ghost-online,ghost-stories,keep-deleted,edit-history,hide-ads,allow-copy,ghost-screenshot,ghost-consume,keep-cleared,profile-info,branding-name,branding-icon,owner-hash"
         default: "profile-info"
@@ -31,9 +31,15 @@ jobs:
 
       - name: Select Xcode
         run: |
+          set -e
           XC=$(jq -r .xcode telegram/versions.json)
           echo "Нужен Xcode $XC"
-          sudo xcode-select -s "/Applications/Xcode_${XC}.app" || ls /Applications | grep Xcode
+          for P in "/Applications/Xcode_${XC}.app" "/Applications/Xcode_${XC}.0.app"; do
+            if [ -d "$P" ]; then sudo xcode-select -s "$P"; break; fi
+          done
+          xcode-select -p
+          ls /Applications | grep -i xcode || true
+          xcodebuild -version
 
       - name: Install Pillow
         run: pip3 install pillow --break-system-packages || pip3 install pillow
