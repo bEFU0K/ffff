@@ -22,9 +22,25 @@ jobs:
 
       - name: Clone Telegram-iOS
         run: |
-          git clone --depth 1 --branch "${{ inputs.telegram_ref }}" --recursive \
-            https://github.com/${{ inputs.telegram_repo }}.git telegram
-          cat telegram/versions.json || true
+          set -x
+          export GIT_TERMINAL_PROMPT=0
+          git config --global http.postBuffer 524288000
+          git config --global http.version HTTP/1.1
+          REPO="${{ inputs.telegram_repo }}"
+          REF="${{ inputs.telegram_ref }}"
+          for i in 1 2 3; do
+            rm -rf telegram
+            if git clone --depth 1 --branch "$REF" "https://github.com/$REPO.git" telegram; then break; fi
+            echo "clone попытка $i не удалась"; sleep 10
+          done
+          [ -d telegram/.git ] || { echo "::error::Не удалось клонировать $REPO@$REF (проверь имя репозитория и ветку)"; exit 1; }
+          cd telegram
+          for i in 1 2 3; do
+            if git submodule update --init --recursive --jobs 4; then OK=1; break; fi
+            echo "submodules попытка $i не удалась"; sleep 15
+          done
+          [ "$OK" = 1 ] || { echo "::error::Не скачались подмодули (см. лог выше)"; git submodule status || true; exit 1; }
+          cat versions.json || true
 
       - name: Select Xcode
         run: |
@@ -230,3 +246,4 @@ jobs:
           path: |
             AyuiOS.ipa
             patch-report.txt
+
