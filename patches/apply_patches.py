@@ -187,3 +187,22 @@ else:
                 if c: open(p, "w", encoding="utf-8").write(n2); done += c; print(f"OK   owner-hash (lang packs): {os.path.relpath(p, root)}")
     if not done:
         print("MISSING owner-hash (lang packs): в русском пакете останется «Владелец»")
+
+# ================= Диагностика: где искать якоря для ненайденных патчей =================
+DIAG = {
+    "ghost-read": r"func [A-Za-z_]*(ReadState|readHistory|ReadHistory|applyMaxReadIndex|markMessagesAsRead)[A-Za-z_]*\(",
+    "hide-ads": r"func [A-Za-z_]*[sS]ponsored[A-Za-z_]*\(",
+    "ghost-consume": r"func [A-Za-z_]*[cC]onsum[A-Za-z_]*\(",
+    "keep-cleared": r"clearHistory\(",
+}
+for label, rx in DIAG.items():
+    n = 0
+    for p in swift_files:
+        try:
+            for i, line in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
+                if re.search(rx, line):
+                    n += 1
+                    if n <= 12:
+                        print(f"DIAG {label}: {os.path.relpath(p, root)}:{i}: {line.strip()[:170]}")
+        except Exception:
+            pass
