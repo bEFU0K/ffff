@@ -9,16 +9,13 @@ on:
       telegram_ref:
         description: "Ветка/тег Telegram-iOS"
         default: "master"
-      runner:
-        description: "macOS раннер"
-        default: "macos-26"
       disable:
         description: "Патчи для отключения (через запятую): ghost-read,ghost-typing,ghost-online,ghost-stories,keep-deleted,edit-history,hide-ads,allow-copy,ghost-screenshot,ghost-consume,keep-cleared,profile-info,branding-name,branding-icon,owner-hash"
         default: "profile-info"
 
 jobs:
   build:
-    runs-on: ${{ inputs.runner }}
+    runs-on: macos-26
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -31,14 +28,22 @@ jobs:
 
       - name: Select Xcode
         run: |
-          set -e
+          sw_vers
           XC=$(jq -r .xcode telegram/versions.json)
           echo "Нужен Xcode $XC"
-          for P in "/Applications/Xcode_${XC}.app" "/Applications/Xcode_${XC}.0.app"; do
-            if [ -d "$P" ]; then sudo xcode-select -s "$P"; break; fi
-          done
-          xcode-select -p
           ls /Applications | grep -i xcode || true
+          FOUND=""
+          for P in "/Applications/Xcode_${XC}.app" "/Applications/Xcode_${XC}.0.app"; do
+            if [ -d "$P" ]; then FOUND="$P"; break; fi
+          done
+          if [ -z "$FOUND" ]; then
+            FOUND=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+            VER=$(defaults read "$FOUND/Contents/Info" CFBundleShortVersionString)
+            echo "::warning::Xcode $XC не найден, беру $VER ($FOUND)"
+            jq --arg v "$VER" '.xcode=$v' telegram/versions.json > /tmp/v.json && cp /tmp/v.json telegram/versions.json
+          fi
+          sudo xcode-select -s "$FOUND"
+          echo "xcode-select: $(xcode-select -p)"
           xcodebuild -version
 
       - name: Install Pillow
@@ -54,8 +59,10 @@ jobs:
         run: |
           cd telegram
           jq --arg id "$API_ID" --arg hash "$API_HASH" \
-            '.api_id=$id | .api_hash=$hash | .bundle_id="com.ayuios.app"' \
+            '.api_id=$id | .api_hash=$hash' \
             build-system/template_minimal_development_configuration.json > ../config.json
+          jq 'del(.api_hash)' ../config.json
+          ls build-system/fake-codesigning/profiles || true
 
       - name: Build
         run: |
