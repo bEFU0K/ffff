@@ -73,8 +73,13 @@ jobs:
                   team, bundle = t, b
           except Exception as e:
               print('profile parse failed, using defaults:', e)
-          cfg['api_id'] = os.environ['API_ID']
-          cfg['api_hash'] = os.environ['API_HASH']
+          api_id = os.environ.get('API_ID', '').strip()
+          api_hash = os.environ.get('API_HASH', '').strip()
+          if not api_id.isdigit() or len(api_hash) != 32:
+              raise SystemExit('ОШИБКА: секреты API_ID (число) и API_HASH (32 символа) пустые или не созданы. '
+                               'Settings -> Secrets and variables -> Actions -> Secrets -> New repository secret.')
+          cfg['api_id'] = api_id
+          cfg['api_hash'] = api_hash
           cfg['bundle_id'] = bundle
           cfg['team_id'] = team
           for k, v in cfg.items():
