@@ -52,17 +52,37 @@ jobs:
       - name: Apply Ayu patches
         run: python3 patches/apply_patches.py telegram "${{ inputs.disable }}" | tee patch-report.txt
 
-      - name: Configure (api_id / api_hash)
+      - name: Configure (api_id / api_hash / bundle_id / team_id)
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
         run: |
           cd telegram
-          jq --arg id "$API_ID" --arg hash "$API_HASH" \
-            '.api_id=$id | .api_hash=$hash' \
-            build-system/template_minimal_development_configuration.json > ../config.json
-          jq 'del(.api_hash)' ../config.json
-          ls build-system/fake-codesigning/profiles || true
+          python3 - << 'PY'
+          import json, os, plistlib, subprocess
+          cfg = json.load(open('build-system/template_minimal_development_configuration.json'))
+          team, bundle = 'GFPGRAM123', 'org.gfpgram.Telegram'
+          try:
+              r = subprocess.run(['openssl', 'smime', '-inform', 'der', '-verify', '-noverify', '-in',
+                                  'build-system/fake-codesigning/profiles/Telegram.mobileprovision'],
+                                 capture_output=True, check=True)
+              appid = plistlib.loads(r.stdout)['Entitlements']['application-identifier']
+              t, b = appid.split('.', 1)
+              print('profile application-identifier:', appid)
+              if len(t) == 10 and b and '*' not in b:
+                  team, bundle = t, b
+          except Exception as e:
+              print('profile parse failed, using defaults:', e)
+          cfg['api_id'] = os.environ['API_ID']
+          cfg['api_hash'] = os.environ['API_HASH']
+          cfg['bundle_id'] = bundle
+          cfg['team_id'] = team
+          for k, v in cfg.items():
+              if isinstance(v, str) and '{!' in v:
+                  print('WARN: placeholder left in', k, '=', v)
+          json.dump(cfg, open('../config.json', 'w'), indent=2)
+          print({k: v for k, v in cfg.items() if k != 'api_hash'})
+          PY
 
       - name: Fix codesigning (aps-environment)
         run: |
