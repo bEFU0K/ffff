@@ -10,13 +10,20 @@ here = os.path.dirname(os.path.abspath(__file__))
 
 shutil.copy(os.path.join(here, "AyuSettings.swift"), os.path.join(core, "AyuSettings.swift"))
 print("OK   AyuSettings.swift added")
+open(os.path.join(core, "AyuSettingsExtra.swift"), "w", encoding="utf-8").write(
+    "import Foundation\n\npublic extension AyuSettings {\n"
+    "    static var keepSelfDestruct: Bool {\n"
+    "        if UserDefaults.standard.object(forKey: \"ayu.keepSelfDestruct\") == nil { return true }\n"
+    "        return UserDefaults.standard.bool(forKey: \"ayu.keepSelfDestruct\")\n"
+    "    }\n}\n")
+print("OK   AyuSettingsExtra.swift added")
 shutil.copy(os.path.join(here, "AyuProfile.swift"), os.path.join(core, "AyuProfile.swift"))
 print("OK   AyuProfile.swift added")
 
 swift_files = []
 for d, _, fs in os.walk(core):
     for f in fs:
-        if f.endswith(".swift") and f not in ("AyuSettings.swift", "AyuProfile.swift"):
+        if f.endswith(".swift") and f not in ("AyuSettings.swift", "AyuProfile.swift", "AyuSettingsExtra.swift"):
             swift_files.append(os.path.join(d, f))
 
 def patch(label, pattern, repl, filename=None, flags=re.M | re.S):
@@ -188,12 +195,20 @@ else:
     if not done:
         print("MISSING owner-hash (lang packs): в русском пакете останется «Владелец»")
 
+# --- Самоудаляющиеся сообщения: не стирать при истечении таймера ---
+patch("keep-selfdestruct",
+      r"^(\s*)(transaction\.deleteMessages\([^\n]*\))[ \t]*$",
+      r"\1if !AyuSettings.keepSelfDestruct { \2 }",
+      filename="ManagedAutoremoveMessageOperations.swift", flags=re.M)
+
 # ================= Диагностика: где искать якоря для ненайденных патчей =================
 DIAG = {
     "ghost-read": r"func [A-Za-z_]*(ReadState|readHistory|ReadHistory|applyMaxReadIndex|markMessagesAsRead)[A-Za-z_]*\(",
     "hide-ads": r"func [A-Za-z_]*[sS]ponsored[A-Za-z_]*\(",
     "ghost-consume": r"func [A-Za-z_]*[cC]onsum[A-Za-z_]*\(",
     "keep-cleared": r"clearHistory\(",
+    "keep-selfdestruct": r"ExpiredContent|AutoremoveTimeoutMessageAttribute|AutoclearTimeoutMessageAttribute",
+    "ghost-consume2": r"ConsumePersonal|MessageContentConsumed|consumePersonalMessage|markMessageContentAsConsumed|readMessageContents",
 }
 for label, rx in DIAG.items():
     n = 0
@@ -202,7 +217,7 @@ for label, rx in DIAG.items():
             for i, line in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
                 if re.search(rx, line):
                     n += 1
-                    if n <= 12:
+                    if n <= 30:
                         print(f"DIAG {label}: {os.path.relpath(p, root)}:{i}: {line.strip()[:170]}")
         except Exception:
             pass
