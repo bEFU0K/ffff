@@ -205,10 +205,22 @@ jobs:
           key: bazel-${{ github.run_id }}
 
       - name: Collect ipa
+        if: always()
         run: |
-          IPA=$(find telegram/bazel-bin -name "Telegram.ipa" 2>/dev/null | head -1)
+          # bazel-bin — симлинк; без -L find не заходит внутрь и ничего не находит
+          IPA=$(find -L telegram/bazel-bin -name "Telegram.ipa" -type f 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then
+            echo "в bazel-bin не найдено, ищу в кэше bazel"
+            IPA=$(find -L "$HOME/bazel-cache" -name "Telegram.ipa" -type f 2>/dev/null | head -1)
+          fi
           echo "ipa: $IPA"
-          [ -n "$IPA" ] && cp "$IPA" AyuiOS.ipa || ls telegram/bazel-bin/Telegram || true
+          if [ -n "$IPA" ]; then
+            cp "$IPA" AyuiOS.ipa
+            ls -la AyuiOS.ipa
+          else
+            echo "::error::Telegram.ipa не найден — смотри лог шага Build"
+            find -L telegram/bazel-bin -maxdepth 3 2>/dev/null | head -50 || true
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -218,4 +230,3 @@ jobs:
           path: |
             AyuiOS.ipa
             patch-report.txt
-
