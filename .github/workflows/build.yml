@@ -1,4 +1,4 @@
-name: Build AyuiOS ipa
+name: Build GFPGRAM ipa
 
 on:
   workflow_dispatch:
@@ -231,8 +231,8 @@ jobs:
           fi
           echo "ipa: $IPA"
           if [ -n "$IPA" ]; then
-            cp "$IPA" AyuiOS.ipa
-            ls -la AyuiOS.ipa
+            cp "$IPA" GFPGRAM.ipa
+            ls -la GFPGRAM.ipa
           else
             echo "::error::Telegram.ipa не найден — смотри лог шага Build"
             find -L telegram/bazel-bin -maxdepth 3 2>/dev/null | head -50 || true
@@ -242,8 +242,8 @@ jobs:
         if: always()
         with:
           if-no-files-found: warn
-          name: AyuiOS
+          name: GFPGRAM-ipa
           path: |
-            AyuiOS.ipa
+            GFPGRAM.ipa
             patch-report.txt
 
