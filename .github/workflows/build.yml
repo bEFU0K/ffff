@@ -10,7 +10,7 @@ on:
         description: "Ветка/тег Telegram-iOS"
         default: "master"
       disable:
-        description: "Патчи для отключения (через запятую): ghost-read,ghost-typing,ghost-online,ghost-stories,keep-deleted,edit-history,hide-ads,allow-copy,ghost-screenshot,ghost-consume,keep-cleared,profile-info,branding-name,branding-icon,owner-hash"
+        description: "Патчи для отключения (через запятую): ghost-read,ghost-typing,ghost-online,ghost-stories,keep-deleted,edit-history,hide-ads,allow-copy,ghost-screenshot,ghost-consume,keep-cleared,keep-selfdestruct,group-fallback,profile-info,branding-name,branding-icon,owner-hash"
         default: "profile-info"
 
 jobs:
@@ -238,12 +238,25 @@ jobs:
             find -L telegram/bazel-bin -maxdepth 3 2>/dev/null | head -50 || true
           fi
 
+      - name: Make Sideloadly ipa (без расширений)
+        if: always()
+        run: |
+          if [ ! -f GFPGRAM.ipa ]; then echo "нет GFPGRAM.ipa, пропускаю"; exit 0; fi
+          rm -rf ipa_tmp && mkdir ipa_tmp
+          unzip -q GFPGRAM.ipa -d ipa_tmp
+          APP=$(ls -d ipa_tmp/Payload/*.app | head -1)
+          echo "до:"; ls "$APP/PlugIns" "$APP/Watch" 2>/dev/null || true
+          # бесплатному Apple ID не хватает App ID на расширения и нет App Groups
+          rm -rf "$APP/PlugIns" "$APP/Watch"
+          (cd ipa_tmp && zip -qry ../GFPGRAM-Sideloadly.ipa Payload)
+          ls -la GFPGRAM-Sideloadly.ipa
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           if-no-files-found: warn
           name: GFPGRAM-ipa
           path: |
+            GFPGRAM-Sideloadly.ipa
             GFPGRAM.ipa
             patch-report.txt
-
