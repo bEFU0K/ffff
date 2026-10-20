@@ -201,6 +201,37 @@ patch("keep-selfdestruct",
       r"\1if !AyuSettings.keepSelfDestruct { \2 }",
       filename="ManagedAutoremoveMessageOperations.swift", flags=re.M)
 
+# ================= Sideloadly / бесплатный Apple ID: без App Group приложение висит на чёрном экране =================
+# Бесплатный аккаунт не выдаёт App Groups, containerURL(...) возвращает nil, Telegram не стартует.
+# Если контейнера группы нет, подставляем обычную папку в Documents (все расширения при установке удаляются).
+GROUP_FALLBACK = (
+    "{ () -> URL? in "
+    "guard let ayuBase = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }; "
+    "let ayuUrl = ayuBase.appendingPathComponent(\"gfp-group\", isDirectory: true); "
+    "try? FileManager.default.createDirectory(at: ayuUrl, withIntermediateDirectories: true, attributes: nil); "
+    "return ayuUrl }()"
+)
+if "group-fallback" in disabled:
+    print("SKIP group-fallback: disabled")
+else:
+    rx = re.compile(r"\b(let|var)\s+maybeAppGroupUrl(?:\s*:\s*URL\?)?\s*=\s*FileManager\.default\.containerURL\(forSecurityApplicationGroupIdentifier:\s*([^)]*)\)")
+    hits = 0
+    for d, _, fs in os.walk(app_dir):
+        for f in fs:
+            if not f.endswith(".swift"):
+                continue
+            p = os.path.join(d, f)
+            try:
+                src = open(p, encoding="utf-8").read()
+            except Exception:
+                continue
+            new, n = rx.subn(lambda m: "%s maybeAppGroupUrl: URL? = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: %s) ?? %s" % (m.group(1), m.group(2), GROUP_FALLBACK), src)
+            if n:
+                open(p, "w", encoding="utf-8").write(new); hits += n
+                print(f"OK   group-fallback: {n} in {os.path.relpath(p, root)}")
+    if hits == 0:
+        print("MISSING group-fallback: anchor not found (смотри DIAG group-fallback ниже)")
+
 # ================= Диагностика: где искать якоря для ненайденных патчей =================
 DIAG = {
     "ghost-read": r"func [A-Za-z_]*(ReadState|readHistory|ReadHistory|applyMaxReadIndex|markMessagesAsRead)[A-Za-z_]*\(",
@@ -221,3 +252,20 @@ for label, rx in DIAG.items():
                         print(f"DIAG {label}: {os.path.relpath(p, root)}:{i}: {line.strip()[:170]}")
         except Exception:
             pass
+
+# где ещё используется контейнер App Group
+n = 0
+for base in (os.path.join(root, "Telegram"), os.path.join(root, "submodules")):
+    for d, _, fs in os.walk(base):
+        for f in fs:
+            if not f.endswith((".swift", ".m", ".mm")):
+                continue
+            p = os.path.join(d, f)
+            try:
+                for i, line in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
+                    if "forSecurityApplicationGroupIdentifier" in line or "maybeAppGroupUrl" in line:
+                        n += 1
+                        if n <= 40:
+                            print(f"DIAG group-fallback: {os.path.relpath(p, root)}:{i}: {line.strip()[:170]}")
+            except Exception:
+                pass
