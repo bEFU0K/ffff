@@ -23,16 +23,8 @@ public enum AyuProfile {
         return nil
     }
 
-    public static func dc(user: TelegramUser) -> Int? {
-        if let res = user.photo.first?.resource as? TelegramCloudMediaResource {
-            return Int(res.datacenterId)
-        }
-        return nil
-    }
-
     public static func infoText(for user: TelegramUser) -> String {
         var parts = ["ID: \(user.id.id._internalGetInt64Value())"]
-        if let dc = dc(user: user) { parts.append("DC\(dc)") }
         if let c = country(phone: user.phone) { parts.append(c) }
         return parts.joined(separator: " · ")
     }
