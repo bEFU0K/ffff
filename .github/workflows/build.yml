@@ -66,7 +66,9 @@ jobs:
         run: pip3 install pillow --break-system-packages || pip3 install pillow
 
       - name: Apply Ayu patches
-        run: python3 patches/apply_patches.py telegram "${{ inputs.disable }}" | tee patch-report.txt
+        run: |
+          set -o pipefail
+          python3 patches/apply_patches.py telegram "${{ inputs.disable }}" | tee patch-report.txt
 
       - name: Configure (api_id / api_hash / bundle_id / team_id)
         env:
@@ -250,6 +252,12 @@ jobs:
           rm -rf "$APP/PlugIns" "$APP/Watch"
           (cd ipa_tmp && zip -qry ../GFPGRAM-Sideloadly.ipa Payload)
           ls -la GFPGRAM-Sideloadly.ipa
+          echo "--- проверка брендинга в готовом ipa:"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleDisplayName|CFBundleName|CFBundleIdentifier|CFBundleIcons" || true
+          ls "$APP" | grep -i -E "AppIcon|Assets.car" || true
+          if ! plutil -p "$APP/Info.plist" | grep CFBundleDisplayName | grep -q GFPGRAM; then
+            echo "::error::В ipa название не GFPGRAM — патч брендинга не сработал"; exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
