@@ -323,6 +323,17 @@ patch("gfp-menu-item",
       r'    }))\n\1',
       base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
 
+# gfpramHashIcon()/gfpramSettingsController живут в модуле SettingsUI — в этих файлах его может не быть в импортах
+for _fn in ("PeerInfoSettingsItems.swift", "PeerInfoScreenSettingsActions.swift", "PeerInfoScreen.swift"):
+    for _p in walk(PEER_INFO):
+        if os.path.basename(_p) != _fn:
+            continue
+        _src = read(_p)
+        if "gfpram" in _src and not re.search(r"^import SettingsUI\s*$", _src, flags=re.M):
+            write(_p, re.sub(r"^(import Foundation\n)", r"\1import SettingsUI\n", _src, count=1, flags=re.M)
+                  if re.search(r"^import Foundation\n", _src, flags=re.M) else "import SettingsUI\n" + _src)
+            print(f"OK   gfp-import-settingsui: {os.path.relpath(_p, root)}")
+
 # кнопка 👻 в шапке списка чатов
 patch("gfp-ghost-button",
       r"(        if let proxyButton = self\.proxyButton \{\n            result\.append\(proxyButton\)\n        \}\n)(        return result)",
