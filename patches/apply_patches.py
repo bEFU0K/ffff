@@ -440,7 +440,7 @@ CTX_MENU = (
     "                    for (ayuIndex, ayuItem) in ayuHistory.enumerated() {\n"
     "                        ayuText += (ayuIndex == 0 ? \"Оригинал:\\n\" : \"Версия \\(ayuIndex):\\n\") + ayuItem + \"\\n\\n\"\n"
     "                    }\n"
-    "                    controllerInteraction?.presentController(textAlertController(context: context, title: \"Сообщение изменено\", text: ayuText, actions: [TextAlertAction(type: .defaultAction, title: \"OK\", action: {})]), nil)\n"
+    "                    controllerInteraction.presentController(textAlertController(context: context, title: \"Сообщение изменено\", text: ayuText, actions: [TextAlertAction(type: .defaultAction, title: \"OK\", action: {})]), nil)\n"
     "                })))\n"
     "            }\n"
     "            if AyuSettings.showIds {\n"
@@ -469,7 +469,7 @@ CTX_MENU = (
     "        }\n"
 )
 patch("gfp-context-menu",
-      r"(func contextMenuForChatPresentationInterfaceState\(.*?\n\s*var actions: \[ContextMenuItem\] = \[\]\n)",
+      r"(        let isPremium = accountPeer\?\.isPremium \?\? false\n\n        var actions: \[ContextMenuItem\] = \[\]\n)",
       lambda m: m.group(1) + CTX_MENU,
       base=TUI, filename="ChatInterfaceStateContextMenus.swift")
 
