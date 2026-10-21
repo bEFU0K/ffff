@@ -66,12 +66,17 @@ def patch_plain(label, path, pattern, repl):
 # ---------- свои Swift-файлы ----------
 shutil.copy(os.path.join(here, "AyuSettings.swift"), os.path.join(core, "AyuSettings.swift"))
 shutil.copy(os.path.join(here, "AyuProfile.swift"), os.path.join(core, "AyuProfile.swift"))
+shutil.copy(os.path.join(here, "AyuPremium.swift"), os.path.join(core, "AyuPremium.swift"))
+if "forward-copy" in disabled:
+    print("SKIP forward-copy: disabled")
+else:
+    shutil.copy(os.path.join(here, "AyuForward.swift"), os.path.join(core, "AyuForward.swift"))
 print("OK   Ayu*.swift added")
 
 # ---------- Режим призрака ----------
 # Прочитано: не отправляем readHistory на сервер (локально чат остаётся прочитанным)
 patch("ghost-read",
-      r"(func pushPeerReadState\([^{]*?readState: PeerReadState\)\s*->\s*Signal<PeerReadState, PeerReadStateValidationError>\s*\{)",
+      r"(func pushPeerReadState\([^{]*?\)\s*->\s*Signal<PeerReadState, PeerReadStateValidationError>\s*\{)",
       r"\1\n    if AyuSettings.ghostRead { return .single(readState) }",
       filename="SynchronizePeerReadState.swift")
 
@@ -81,8 +86,8 @@ patch("ghost-typing",
       filename="ManagedLocalInputActivities.swift")
 
 patch("ghost-online",
-      r"account\.updateStatus\(offline: \.boolFalse\)",
-      r"account.updateStatus(offline: AyuSettings.ghostOnline ? .boolTrue : .boolFalse)",
+      r"account\.updateStatus\(offline: ([^()\n]*(?:\([^()\n]*\))?[^()\n]*)\)",
+      r"account.updateStatus(offline: AyuSettings.ghostOnline ? .boolTrue : (\1))",
       filename="ManagedAccountPresence.swift")
 
 patch("ghost-stories",
@@ -109,9 +114,15 @@ patch("keep-deleted",
       r"                    break\n"
       r"                }\n",
       filename="AccountStateManagementUtils.swift")
+# Личные чаты и обычные группы присылают удаление по глобальным id: здесь раньше не ставилась метка 🗑
 patch("keep-deleted",
       r"(case let \.DeleteMessagesWithGlobalIds\(ids\):\n)",
-      r"\1                if AyuSettings.keepDeleted { break }\n",
+      r"\1                if AyuSettings.keepDeleted {\n"
+      r"                    for ayuId in transaction.messageIdsForGlobalIds(ids) where transaction.getMessage(ayuId) != nil {\n"
+      r"                        AyuDeleted.mark(ayuId)\n"
+      r"                    }\n"
+      r"                    break\n"
+      r"                }\n",
       filename="AccountStateManagementUtils.swift")
 
 patch("keep-cleared",
@@ -283,7 +294,9 @@ else:
 ui_core = os.path.join(root, "submodules")
 shutil.copy(os.path.join(here, "GfpramSettingsController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift"))
-print("OK   GfpramSettingsController.swift added")
+shutil.copy(os.path.join(here, "GfpramPremiumController.swift"),
+            os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"))
+print("OK   GfpramSettingsController.swift + GfpramPremiumController.swift added")
 
 # SettingsUI: зависимость PromptUI (поле ввода кода)
 patch_plain("gfp-menu-dep", os.path.join(root, "submodules/SettingsUI/BUILD"),
@@ -294,16 +307,19 @@ PEER_INFO = os.path.join(root, "submodules/TelegramUI/Components/PeerInfo/PeerIn
 # пункт «GFPGRAM» в Настройках
 patch("gfp-menu-enum",
       r"(enum PeerInfoSettingsSection \{\n)",
-      r"\1    case gfpram\n",
+      r"\1    case gfpram\n    case gfpramSupport\n",
       base=PEER_INFO, filename="PeerInfoScreen.swift")
 patch("gfp-menu-action",
       r"(        case \.appearance:\n            push\(themeSettingsController\(context: self\.context\)\)\n)",
-      r"        case .gfpram:\n            push(gfpramSettingsController(context: self.context))\n\1",
+      r"        case .gfpram:\n            push(gfpramSettingsController(context: self.context))\n        case .gfpramSupport:\n            gfpramOpenSupport(context: self.context)\n\1",
       base=PEER_INFO, filename="PeerInfoScreenSettingsActions.swift")
 patch("gfp-menu-item",
       r"(    items\[\.advanced\]!\.append\(PeerInfoScreenDisclosureItem\(id: 0, label: notificationsWarning)",
-      r'    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 50, label: .text(AyuSettings.ghostMaster ? "👻" : ""), text: "GFPGRAM", icon: PresentationResourcesSettings.appearance, action: {\n'
+      r'    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 50, label: .text(AyuSettings.ghostMaster ? "👻" : ""), text: "GFPGRAM", icon: gfpramHashIcon(), action: {\n'
       r'        interaction.openSettings(.gfpram)\n'
+      r'    }))\n'
+      r'    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 53, label: .text("@gfpgram_support"), text: "Тех-поддержка", icon: nil, action: {\n'
+      r'        interaction.openSettings(.gfpramSupport)\n'
       r'    }))\n\1',
       base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
 
@@ -368,8 +384,102 @@ patch("bypass-peer",
       r"\1        if AyuSettings.allowCopy { return false }\n\2",
       filename="PeerUtils.swift")
 
-# сменные иконки: три присланные
-GFP_ICONS = [("GfpAnime", "anime.jpg"), ("GfpWhite", "white.jpg"), ("GfpRed", "red.jpg")]
+
+# ======================= Новое в 1.1 =======================
+TUI = os.path.join(root, "submodules/TelegramUI")
+
+# Пересылка из закрытых чатов -> копия обычным сообщением (сервер не принимает forwardMessages)
+patch("forward-copy",
+      r"(func enqueueMessages\(transaction: Transaction, [^{]*?)messages: (\[\(Bool, EnqueueMessage\)\])([^{]*?\)\s*->\s*\[MessageId\?\]\s*\{)",
+      r"\1messages ayuRawMessages: \2\3\n    let messages = AyuForward.transform(transaction: transaction, messages: ayuRawMessages)",
+      filename="EnqueueMessage.swift")
+
+# До 10 аккаунтов (лимит стоит в клиенте)
+if "more-accounts" in disabled:
+    print("SKIP more-accounts: disabled")
+else:
+    n = 0
+    rx_acc = re.compile(r"\b(maximumAvailableAccounts(?:\s*:\s*Int)?\s*=\s*)([34])\b")
+    rx_acc2 = re.compile(r"\b((?:let|var)\s+maximumNumberOfAccounts(?:\s*:\s*Int)?\s*=\s*)([34])\b")
+    for base in (os.path.join(root, "submodules"), app_dir):
+        for pth in walk(base):
+            try:
+                src = read(pth)
+            except Exception:
+                continue
+            if "maximum" not in src:
+                continue
+            new, c1 = rx_acc.subn(lambda m: m.group(1) + "(AyuSettings.moreAccounts ? 10 : " + m.group(2) + ")", src)
+            new, c2 = rx_acc2.subn(lambda m: m.group(1) + "(AyuSettings.moreAccounts ? 10 : " + m.group(2) + ")", new)
+            if c1 + c2:
+                write(pth, new); n += c1 + c2
+                print(f"OK   more-accounts: {c1 + c2} in {os.path.relpath(pth, root)}")
+    hits_by_label["more-accounts"] = n
+    if n == 0:
+        print("MISSING more-accounts: anchor not found")
+
+# Меню сообщения: «Показать оригинал» (история правок), «ID сообщения», «Выдать значок #»
+CTX_MENU = (
+    "\n        if let ayuMessage = messages.first {\n"
+    "            let ayuHistory = AyuEditHistory.history(id: ayuMessage.id)\n"
+    "            if !ayuHistory.isEmpty {\n"
+    "                actions.append(.action(ContextMenuActionItem(text: \"Показать оригинал\", icon: { _ in return nil }, action: { _, f in\n"
+    "                    f(.default)\n"
+    "                    var ayuText = \"\"\n"
+    "                    for (ayuIndex, ayuItem) in ayuHistory.enumerated() {\n"
+    "                        ayuText += (ayuIndex == 0 ? \"Оригинал:\\n\" : \"Версия \\(ayuIndex):\\n\") + ayuItem + \"\\n\\n\"\n"
+    "                    }\n"
+    "                    controllerInteraction?.presentController(textAlertController(context: context, title: \"Сообщение изменено\", text: ayuText, actions: [TextAlertAction(type: .defaultAction, title: \"OK\", action: {})]), nil)\n"
+    "                })))\n"
+    "            }\n"
+    "            if AyuSettings.showIds {\n"
+    "                actions.append(.action(ContextMenuActionItem(text: \"ID сообщения: \\(ayuMessage.id.id)\", icon: { _ in return nil }, action: { _, f in\n"
+    "                    f(.default)\n"
+    "                    UIPasteboard.general.string = \"\\(ayuMessage.id.id)\"\n"
+    "                })))\n"
+    "            }\n"
+    "            if AyuSettings.adminUnlocked {\n"
+    "                var ayuTargetId = ayuMessage.author?.id ?? ayuMessage.id.peerId\n"
+    "                if let ayuChannel = ayuMessage.peers[ayuMessage.id.peerId] as? TelegramChannel, case .broadcast = ayuChannel.info {\n"
+    "                    ayuTargetId = ayuChannel.id\n"
+    "                }\n"
+    "                let ayuTarget = ayuTargetId.id._internalGetInt64Value()\n"
+    "                let ayuHas = AyuBadges.contains(ayuTarget)\n"
+    "                let ayuTitle = ayuMessage.peers[ayuTargetId]?.debugDisplayTitle ?? \"ID \\(ayuTarget)\"\n"
+    "                actions.append(.action(ContextMenuActionItem(text: ayuHas ? \"Убрать значок #\" : \"Выдать значок #\", icon: { _ in return nil }, action: { _, f in\n"
+    "                    f(.default)\n"
+    "                    if ayuHas {\n"
+    "                        AyuBadges.remove(id: ayuTarget)\n"
+    "                    } else {\n"
+    "                        AyuBadges.add(id: ayuTarget, name: ayuTitle)\n"
+    "                    }\n"
+    "                })))\n"
+    "            }\n"
+    "        }\n"
+)
+patch("gfp-context-menu",
+      r"(func contextMenuForChatPresentationInterfaceState\(.*?\n\s*var actions: \[ContextMenuItem\] = \[\]\n)",
+      lambda m: m.group(1) + CTX_MENU,
+      base=TUI, filename="ChatInterfaceStateContextMenus.swift")
+
+# ID и страна под аккаунтом в Настройках (перед строкой GFPGRAM)
+ACC_ROWS = (
+    "    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 51, label: .text(String(context.account.peerId.id._internalGetInt64Value())), text: \"ID\", icon: nil, action: {\n"
+    "        UIPasteboard.general.string = String(context.account.peerId.id._internalGetInt64Value())\n"
+    "    }))\n"
+    "    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 52, label: .text(AyuProfile.country(phone: ((data as PeerInfoScreenData?)?.peer as? TelegramUser)?.phone) ?? \"не определена\"), text: \"Страна номера\", icon: nil, action: {\n"
+    "    }))\n"
+    "    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 54, label: .text((((data as PeerInfoScreenData?)?.peer as? TelegramUser)?.username).map { \"@\" + $0 } ?? \"не задан\"), text: \"Юзер\", icon: nil, action: {\n"
+    "        if let ayuName = (((data as PeerInfoScreenData?)?.peer as? TelegramUser)?.username) { UIPasteboard.general.string = \"@\" + ayuName }\n"
+    "    }))\n"
+)
+patch("gfp-account-info",
+      r"(    items\[\.advanced\]!\.append\(PeerInfoScreenDisclosureItem\(id: 50, label: \.text\(AyuSettings\.ghostMaster)",
+      lambda m: ACC_ROWS + m.group(1),
+      base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
+
+# сменные иконки: основная (заменяется выше), красная, чёрная, аниме, океан, Губка Боб. Остальные стандартные убираем.
+GFP_ICONS = [("GfpRed", "red.jpg"), ("GfpBlack", "black.jpg"), ("GfpAnime", "anime.jpg"), ("GfpOcean", "ocean.jpg"), ("GfpSponge", "sponge.jpg")]
 try:
     from PIL import Image as _Image
     sizes = {"{n}@2x.png": 120, "{n}@3x.png": 180, "{n}Ipad.png": 76, "{n}Ipad@2x.png": 152, "{n}LargeIpad@2x.png": 167,
@@ -387,17 +497,80 @@ try:
 except Exception as e:
     print(f"MISSING gfp-icons-files: {e}")
 
-patch_plain("gfp-icons-build", os.path.join(root, "Telegram/BUILD"),
-      r"(alternate_icon_folders = \[\n)",
-      r'\1    "GfpAnime",\n    "GfpWhite",\n    "GfpRed",\n')
-patch("gfp-icons-list",
-      r'(var icons = \[\n)(\s*)(PresentationAppIcon\(name: "BlueIcon")',
-      r'\1\2PresentationAppIcon(name: "GfpAnime", imageName: "GfpAnime"),\n\2PresentationAppIcon(name: "GfpWhite", imageName: "GfpWhite"),\n\2PresentationAppIcon(name: "GfpRed", imageName: "GfpRed"),\n\2\3',
-      base=os.path.join(root, "submodules/TelegramUI/Sources"), filename="AppDelegate.swift")
+def _keep_primary(lines_text):
+    """Из старого списка оставляем только основную иконку BlueIcon (она уже перекрашена в твою)."""
+    keep = [l.rstrip() for l in lines_text.split("\n") if '"BlueIcon"' in l]
+    return [l if l.endswith(",") else l + "," for l in keep]
+
+# Telegram/BUILD: список папок альтернативных иконок
+if "gfp-icons-build" in disabled:
+    print("SKIP gfp-icons-build: disabled")
+else:
+    bp = os.path.join(root, "Telegram/BUILD")
+    n = 0
+    if os.path.exists(bp):
+        src = read(bp)
+        def _build_list(m):
+            keep = _keep_primary(m.group(2))
+            body = "\n".join(keep + ['    "%s",' % x for x, _ in GFP_ICONS])
+            return m.group(1) + "\n" + body + "\n" + m.group(3)
+        new, n = re.subn(r"(alternate_icon_folders = \[)([^\]]*)(\])", _build_list, src, count=1)
+        if n:
+            write(bp, new)
+    hits_by_label["gfp-icons-build"] = n
+    print("OK   gfp-icons-build: список иконок заменён" if n else "MISSING gfp-icons-build")
+
+# Список иконок в выборе (Настройки -> GFPGRAM -> Иконка приложения)
+if "gfp-icons-list" in disabled:
+    print("SKIP gfp-icons-list: disabled")
+else:
+    n = 0
+    for pth in walk(os.path.join(root, "submodules/TelegramUI/Sources")):
+        if os.path.basename(pth) != "AppDelegate.swift":
+            continue
+        src = read(pth)
+        def _swift_list(m):
+            keep = _keep_primary(m.group(2))
+            mine = ['        PresentationAppIcon(name: "%s", imageName: "%s"),' % (x, x) for x, _ in GFP_ICONS]
+            return m.group(1) + "\n" + "\n".join(keep + mine) + "\n" + m.group(3)
+        new, c = re.subn(r"(var icons = \[)(.*?)(\n\s*\])", _swift_list, src, count=1, flags=re.S)
+        if c:
+            write(pth, new); n += c
+            print(f"OK   gfp-icons-list: {c} in {os.path.relpath(pth, root)}")
+    hits_by_label["gfp-icons-list"] = n
+    if n == 0:
+        print("MISSING gfp-icons-list")
+
+# Плашка «# Официальный аккаунт клиента GFPGRAM» в профиле (у аккаунтов со значком «#» и у @gfpgram_support)
+if "gfp-verified" in disabled:
+    print("SKIP gfp-verified: disabled")
+else:
+    n = 0
+    for pth in walk(os.path.join(root, "submodules/TelegramUI")):
+        if os.path.basename(pth) != "PeerInfoScreen.swift":
+            continue
+        src = read(pth)
+        new_src, c = re.subn(r"^(\s*)(if let user = data\.peer as\? TelegramUser \{)\s*$",
+                             r"\1\2\n\1    if let ayuVerified = AyuVerified.text(id: user.id.id._internalGetInt64Value(), username: user.username) {\n"
+                             r'\1        items[.peerInfo, default: []].append(PeerInfoScreenLabeledValueItem(id: 9002, label: "#", text: ayuVerified, textColor: .primary, action: nil, longTapAction: nil, requestLayout: { _ in }))\n'
+                             r"\1    }",
+                             src, count=1, flags=re.M)
+        if c:
+            write(pth, new_src); n += c
+            print(f"OK   gfp-verified: {c} in {os.path.relpath(pth, root)}")
+    hits_by_label["gfp-verified"] = n
+    if n == 0:
+        print("MISSING gfp-verified: anchor not found")
+
+# Фоновые функции Premium (заглушка при упоминании, бэкап): запускаются при открытии списка чатов
+patch("gfp-premium-start",
+      r"(    override public func loadDisplayNode\(\) \{\n)",
+      r"\1        AyuPremiumService.start(account: self.context.account)\n",
+      base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListController.swift")
 
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
-for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "hide-ads", "ghost-consume", "keep-selfdestruct"):
+for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "edit-history", "hide-ads", "ghost-consume", "keep-selfdestruct", "forward-copy", "more-accounts", "gfp-context-menu", "gfp-account-info", "gfp-premium-start", "gfp-verified"):
     if l not in disabled and hits_by_label.get(l, 0) == 0:
         print(f"::warning::патч {l} не применился (якорь не найден) — функция работать не будет")
 if bad:

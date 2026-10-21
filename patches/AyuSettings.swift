@@ -100,7 +100,7 @@ public enum AyuSettings {
         }
     }
 
-    public static let version = "1.0"
+    public static let version = "1.2"
 
     private static let ghostKeys = ["ghostRead", "ghostTyping", "ghostOnline", "ghostStories", "ghostScreenshot", "ghostConsume"]
 
@@ -121,8 +121,13 @@ public enum AyuSettings {
                 Toggle(key: "keepCleared", title: "Сохранять очищенные чаты"),
                 Toggle(key: "keepSelfDestruct", title: "Сохранять самоудаляющиеся")
             ]),
-            Group(title: "ОБХОД ОГРАНИЧЕНИЙ", footer: "Снимает запрет на пересылку, копирование и сохранение в закрытых чатах и каналах.", toggles: [
-                Toggle(key: "allowCopy", title: "Обходить запрет пересылки и копирования")
+            Group(title: "ОБХОД ОГРАНИЧЕНИЙ", footer: "Снимает запрет на копирование и сохранение в закрытых чатах и каналах. Если пересылка запрещена, «Переслать» отправит обычное сообщение-копию (текст и медиа), а не пересланное.", toggles: [
+                Toggle(key: "allowCopy", title: "Обходить запрет пересылки и копирования"),
+                Toggle(key: "forwardCopy", title: "Пересылать запрещённое как копию")
+            ]),
+            Group(title: "ЧИТЫ", footer: "Лимит аккаунтов применяется после перезапуска приложения. ID сообщения копируется нажатием в меню сообщения.", toggles: [
+                Toggle(key: "moreAccounts", title: "До 10 аккаунтов вместо 3"),
+                Toggle(key: "showIds", title: "Пункт «ID сообщения» в меню")
             ]),
             Group(title: "ПРОЧЕЕ", footer: "", toggles: [
                 Toggle(key: "hideAds", title: "Скрывать рекламу")
@@ -135,12 +140,20 @@ public enum AyuSettings {
         return UserDefaults.standard.bool(forKey: key)
     }
 
+    /// Переключатели, которые по умолчанию выключены.
+    private static let defaultOff: Set<String> = ["showIds", "premiumStub"]
+
+    private static func flagKey(_ key: String) -> Bool {
+        if UserDefaults.standard.object(forKey: "ayu." + key) == nil { return !defaultOff.contains(key) }
+        return UserDefaults.standard.bool(forKey: "ayu." + key)
+    }
+
     /// Значение переключателя по короткому ключу (например "ghostRead").
     public static func value(_ key: String) -> Bool {
         if key == "ghostMode" {
             return self.ghostMaster
         }
-        return flag("ayu." + key)
+        return flagKey(key)
     }
 
     public static func set(_ key: String, _ value: Bool) {
@@ -178,6 +191,14 @@ public enum AyuSettings {
     public static var ghostConsume: Bool { return flag("ayu.ghostConsume") }
     public static var keepCleared: Bool { return flag("ayu.keepCleared") }
     public static var keepSelfDestruct: Bool { return flag("ayu.keepSelfDestruct") }
+    public static var forwardCopy: Bool { return flag("ayu.forwardCopy") }
+    public static var moreAccounts: Bool { return flag("ayu.moreAccounts") }
+    public static var showIds: Bool { return flagKey("showIds") }
+
+    public static var ownUsername: String? {
+        get { return UserDefaults.standard.string(forKey: "ayu.ownUsername") }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.ownUsername") }
+    }
 
     // MARK: - Скрытый вход в админ-панель
 
@@ -249,9 +270,24 @@ public enum AyuBadges {
     }
 
     public static func decorate(id: Int64, title: String) -> String {
+        var result = title
         if AyuStore.shared.hasBadge(String(id)) {
-            return title + " #"
+            result += " #"
         }
-        return title
+        if AyuPremium.isStarVisible(id: id) {
+            result += " ⭐"
+        }
+        return result
+    }
+}
+
+/// Локальная плашка «Официальный аккаунт клиента GFPGRAM» в профиле (как подтверждение у Major, но только на этом устройстве).
+public enum AyuVerified {
+    public static let text = "Официальный аккаунт клиента GFPGRAM"
+
+    public static func text(id: Int64, username: String?) -> String? {
+        if AyuBadges.contains(id) { return text }
+        if let username = username, username.lowercased() == "gfpgram_support" { return text }
+        return nil
     }
 }

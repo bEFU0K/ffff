@@ -10,7 +10,7 @@ import AccountContext
 import LocalizedPeerData
 import PromptUI
 
-private final class GfpramArguments {
+final class GfpramArguments {
     let toggle: (String, Bool) -> Void
     let perform: (Int32) -> Void
 
@@ -20,7 +20,7 @@ private final class GfpramArguments {
     }
 }
 
-private enum GfpramEntry: ItemListNodeEntry {
+enum GfpramEntry: ItemListNodeEntry {
     case header(Int32, String)
     case toggle(Int32, String, String, Bool)
     case action(Int32, String, String, Int32)
@@ -70,9 +70,19 @@ private enum GfpramEntry: ItemListNodeEntry {
     }
 }
 
-private func gfpramEntries(adminUnlocked: Bool) -> [GfpramEntry] {
+private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?, ownUsername: String?) -> [GfpramEntry] {
     var entries: [GfpramEntry] = []
-    var base: Int32 = 0
+    entries.append(.header(0, "АККАУНТ"))
+    entries.append(.action(1, "ID", String(ownId), 20))
+    entries.append(.action(2, "Страна номера", AyuProfile.country(phone: ownPhone) ?? "не определена", 21))
+    if let ownUsername = ownUsername, !ownUsername.isEmpty {
+        entries.append(.action(3, "Юзернейм", "@" + ownUsername, 22))
+    }
+    entries.append(.footer(4, "Нажмите на ID или юзернейм, чтобы скопировать. Страна определяется по коду номера телефона."))
+    entries.append(.header(5, "PREMIUM"))
+    entries.append(.action(6, "GFPGRAM Premium", AyuPremium.statusText, 3))
+    entries.append(.action(7, "Тех-поддержка", "@" + AyuPremium.supportUsername, 4))
+    var base: Int32 = 100
     for group in AyuSettings.groups {
         entries.append(.header(base, group.title))
         var index: Int32 = 1
@@ -120,17 +130,35 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
                 }))
             case 2:
                 pushImpl?(gfpramAdminController(context: context))
+            case 3:
+                pushImpl?(gfpramPremiumController(context: context))
+            case 4:
+                gfpramOpenSupport(context: context)
+            case 22:
+                if let name = AyuSettings.ownUsername {
+                    UIPasteboard.general.string = "@" + name
+                }
+            case 20:
+                UIPasteboard.general.string = String(context.account.peerId.id._internalGetInt64Value())
             default:
                 break
             }
         }
     )
 
-    let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get())
+    let ownPeer = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.Peer(id: context.account.peerId))
+    let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get(), ownPeer)
     |> deliverOnMainQueue
-    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    |> map { presentationData, _, ownPeer -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        var ownPhone: String?
+        var ownUsername: String?
+        if let ownPeer = ownPeer, case let .user(user) = ownPeer {
+            ownPhone = user.phone
+            ownUsername = user.username
+            AyuSettings.ownUsername = user.username
+        }
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("GFPGRAM"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramEntries(adminUnlocked: AyuSettings.adminUnlocked), style: .blocks, animateChanges: false)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramEntries(adminUnlocked: AyuSettings.adminUnlocked, ownId: context.account.peerId.id._internalGetInt64Value(), ownPhone: ownPhone, ownUsername: ownUsername), style: .blocks, animateChanges: false)
         return (controllerState, (listState, arguments))
     }
 
@@ -149,7 +177,7 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
 private func gfpramAdminEntries() -> [GfpramEntry] {
     var entries: [GfpramEntry] = []
     entries.append(.header(0, "ЗНАЧОК «#»"))
-    entries.append(.action(1, "Выдать значок по @username", "", 10))
+    entries.append(.action(1, "Выдать значок: @username, ссылка или ID", "", 10))
     entries.append(.action(2, "Выдать значок себе", "", 11))
     var index: Int32 = 3
     var listIndex: Int32 = 0
@@ -158,9 +186,19 @@ private func gfpramAdminEntries() -> [GfpramEntry] {
         index += 1
         listIndex += 1
     }
-    entries.append(.footer(index, "Значок «#» показывается рядом с именем пользователя или названием канала только на этом устройстве. Другие пользователи его не видят."))
+    entries.append(.footer(index, "Значок «#» показывается рядом с именем пользователя или названием канала только на этом устройстве. Другие пользователи его не видят. Быстрее всего: зажать любое сообщение в канале или чате и выбрать «Выдать значок #»."))
     entries.append(.header(100, "ДАННЫЕ"))
     entries.append(.action(101, "Забыть маркеры удалённых сообщений", "", 12))
+    entries.append(.header(200, "PREMIUM"))
+    entries.append(.action(201, "Выдать Premium пользователю", "", 20))
+    entries.append(.action(202, "Выдать Premium себе", AyuPremium.statusText, 21))
+    entries.append(.action(203, "Снять свой Premium", "", 22))
+    entries.append(.footer(204, "Срок задаёте вы: «30» = 30 дней, «7д», «12ч», «90м». Создаётся ключ для конкретного аккаунта, его можно отправить прямо в чат. Изменить срок уже выданного ключа нельзя: выдайте новый. Ниже журнал выдачи, нажмите запись, чтобы скопировать ключ."))
+    var issuedIndex: Int32 = 0
+    for row in AyuPremium.issuedLog() {
+        entries.append(.action(205 + issuedIndex, row.name, "до " + AyuPremium.format(row.until), 2000 + issuedIndex))
+        issuedIndex += 1
+    }
     return entries
 }
 
@@ -176,6 +214,15 @@ public func gfpramAdminController(context: AccountContext) -> ViewController {
         toggle: { _, _ in
         },
         perform: { kind in
+            if kind >= 2000 {
+                let log = AyuPremium.issuedLog()
+                let index = Int(kind - 2000)
+                if index >= 0 && index < log.count {
+                    UIPasteboard.general.string = log[index].key
+                    showMessage("Ключ скопирован")
+                }
+                return
+            }
             if kind >= 1000 {
                 let entries = AyuBadges.entries()
                 let index = Int(kind - 1000)
@@ -187,15 +234,25 @@ public func gfpramAdminController(context: AccountContext) -> ViewController {
             }
             switch kind {
             case 10:
-                presentImpl?(promptController(context: context, text: "Юзернейм пользователя или канала", value: nil, placeholder: "username", apply: { value in
+                presentImpl?(promptController(context: context, text: "@username, ссылка t.me или числовой ID канала/пользователя", value: nil, placeholder: "@channel", apply: { value in
                     guard let value = value else {
                         return
                     }
                     var name = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if name.hasPrefix("@") {
-                        name.removeFirst()
+                    for prefix in ["https://", "http://", "t.me/", "telegram.me/", "@"] {
+                        if name.hasPrefix(prefix) {
+                            name.removeFirst(prefix.count)
+                        }
+                    }
+                    if let slash = name.firstIndex(where: { $0 == "/" || $0 == "?" }) {
+                        name = String(name[name.startIndex ..< slash])
                     }
                     if name.isEmpty {
+                        return
+                    }
+                    if let numeric = Int64(name.hasPrefix("-100") ? String(name.dropFirst(4)) : name), numeric > 0 {
+                        AyuBadges.add(id: numeric, name: "ID " + String(numeric))
+                        refresh.set(true)
                         return
                     }
                     let _ = (context.engine.peers.resolvePeerByName(name: name, referrer: nil)
@@ -223,6 +280,14 @@ public func gfpramAdminController(context: AccountContext) -> ViewController {
             case 12:
                 AyuDeleted.clearAll()
                 showMessage("Готово")
+            case 20:
+                gfpramAdminIssuePremium(context: context, selfOnly: false, present: { c in presentImpl?(c) }, done: { refresh.set(true) })
+            case 21:
+                gfpramAdminIssuePremium(context: context, selfOnly: true, present: { c in presentImpl?(c) }, done: { refresh.set(true) })
+            case 22:
+                AyuPremium.revokeLocal()
+                refresh.set(true)
+                showMessage("Premium снят на этом устройстве")
             default:
                 break
             }
