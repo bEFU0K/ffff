@@ -390,6 +390,6 @@ public enum AyuPremiumService {
         lastReply[key] = now
         lock.unlock()
         let text = stubText
-        let _ = TelegramEngine(account: account).messages.enqueueOutgoingMessage(to: message.id.peerId, replyTo: EngineMessageReplySubject(messageId: message.id, quote: nil), content: .text(text)).start()
+        let _ = TelegramEngine(account: account).messages.enqueueOutgoingMessage(to: message.id.peerId, replyTo: EngineMessageReplySubject(messageId: message.id, quote: nil, innerSubject: nil), content: .text(text)).start()
     }
 }
