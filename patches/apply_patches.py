@@ -568,6 +568,79 @@ patch("gfp-premium-start",
       r"\1        AyuPremiumService.start(account: self.context.account)\n",
       base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListController.swift")
 
+# ---------- Автоподстройка под актуальный API Telegram-iOS ----------
+# API Telegram меняется (EngineOutgoingMessageContent.text получил доп. аргументы и т.п.).
+# Читаем реальное определение из чекаута и подгоняем наши вызовы `content: .text(...)`.
+def _split_top(s):
+    parts, d, cur = [], 0, ""
+    for ch in s:
+        if ch in "([<": d += 1
+        elif ch in ")]>": d -= 1
+        if ch == "," and d == 0:
+            parts.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+    if cur.strip(): parts.append(cur.strip())
+    return parts
+
+def _default_for(t):
+    t = t.strip()
+    if t.startswith("["): return "[]"
+    if t.endswith("?"): return "nil"
+    return None
+
+def adapt_text_content():
+    case_line, defn = None, None
+    for p in walk(os.path.join(root, "submodules/TelegramCore")):
+        try: src = read(p)
+        except Exception: continue
+        m = re.search(r"enum\s+EngineOutgoingMessageContent\b.*?\{(.*?)^\s*\}", src, re.S | re.M)
+        if m:
+            defn = os.path.relpath(p, root)
+            c = re.search(r"^\s*case\s+text\((.*)\)\s*$", m.group(1), re.M)
+            if c: case_line = c.group(1)
+            break
+    print(f"INFO EngineOutgoingMessageContent: {defn}; case text({case_line})")
+    if case_line is None:
+        print("::warning::не нашёл case text(...) в EngineOutgoingMessageContent — вызовы .text(...) не трогаю"); return
+    payload = _split_top(case_line)
+    if len(payload) <= 1:
+        print("OK   .text(...) — один аргумент, подгонять не нужно"); return
+    extra = []
+    for item in payload[1:]:
+        if ":" in item and not item.strip().startswith("["):
+            label, typ = [x.strip() for x in item.split(":", 1)]
+            d = _default_for(typ)
+            if d is None: print(f"::error::не знаю значение по умолчанию для {item} в case text({case_line})"); sys.exit(1)
+            extra.append(f"{label}: {d}")
+        else:
+            d = _default_for(item)
+            if d is None: print(f"::error::не знаю значение по умолчанию для {item} в case text({case_line})"); sys.exit(1)
+            extra.append(d)
+    targets = [os.path.join(core, "AyuPremium.swift"),
+               os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"),
+               os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift")]
+    for t in targets:
+        if not os.path.exists(t): continue
+        src, out, i, n = read(t), "", 0, 0
+        key = "content: .text("
+        while True:
+            j = src.find(key, i)
+            if j < 0: out += src[i:]; break
+            k, d = j + len(key), 1
+            while d and k < len(src):
+                d += (src[k] == "(") - (src[k] == ")"); k += 1
+            inner = src[j + len(key):k - 1]
+            if len(_split_top(inner)) == 1:
+                out += src[i:j] + key + inner + ", " + ", ".join(extra) + ")"; n += 1
+            else:
+                out += src[i:k]
+            i = k
+        if n:
+            write(t, out); print(f"OK   .text(...) +{', '.join(extra)}: {n} в {os.path.relpath(t, root)}")
+
+adapt_text_content()
+
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
 for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "edit-history", "hide-ads", "ghost-consume", "keep-selfdestruct", "forward-copy", "more-accounts", "gfp-context-menu", "gfp-account-info", "gfp-premium-start", "gfp-verified"):
