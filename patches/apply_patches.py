@@ -11,7 +11,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 core = os.path.join(root, "submodules/TelegramCore/Sources")
 app_dir = os.path.join(root, "Telegram/Telegram-iOS")
 APP_NAME = "GFPGRAM"
-CRITICAL = ["branding-name", "branding-icon", "group-fallback"]
+CRITICAL = ["branding-name", "branding-icon", "group-fallback", "gfp-menu-enum", "gfp-menu-action", "gfp-menu-item", "gfp-menu-dep", "gfp-ghost-button", "gfp-deleted-chat", "gfp-deleted-bubble", "gfp-badges", "gfp-icons-build", "gfp-icons-list", "bypass-peer"]
 hits_by_label = {}
 
 def read(p):
@@ -49,6 +49,19 @@ def patch(label, pattern, repl, base=None, filename=None, flags=re.M | re.S):
     hits_by_label[label] = hits_by_label.get(label, 0) + total
     if total == 0:
         print(f"MISSING {label}: anchor not found")
+
+
+def patch_plain(label, path, pattern, repl):
+    if label in disabled:
+        print(f"SKIP {label}: disabled"); return
+    if not os.path.exists(path):
+        print(f"MISSING {label}: {path} not found"); return
+    src = read(path)
+    new, n = re.subn(pattern, repl, src, flags=re.M | re.S)
+    if n:
+        write(path, new)
+    hits_by_label[label] = hits_by_label.get(label, 0) + n
+    print(f"OK   {label}: {n} in {os.path.relpath(path, root)}" if n else f"MISSING {label}: anchor not found")
 
 # ---------- свои Swift-файлы ----------
 shutil.copy(os.path.join(here, "AyuSettings.swift"), os.path.join(core, "AyuSettings.swift"))
@@ -89,7 +102,12 @@ patch("ghost-consume",
 # ---------- Удалённые сообщения / история ----------
 patch("keep-deleted",
       r"(case let \.DeleteMessages\(ids\):\n)",
-      r"\1                if AyuSettings.keepDeleted { break }\n",
+      r"\1                if AyuSettings.keepDeleted {\n"
+      r"                    for ayuId in ids where transaction.getMessage(ayuId) != nil {\n"
+      r"                        AyuDeleted.mark(ayuId)\n"
+      r"                    }\n"
+      r"                    break\n"
+      r"                }\n",
       filename="AccountStateManagementUtils.swift")
 patch("keep-deleted",
       r"(case let \.DeleteMessagesWithGlobalIds\(ids\):\n)",
@@ -259,6 +277,123 @@ else:
     hits_by_label["group-fallback"] = n
     if n == 0:
         print("MISSING group-fallback")
+
+
+# ======================= Меню GFPGRAM, маркеры, иконки, значки =======================
+ui_core = os.path.join(root, "submodules")
+shutil.copy(os.path.join(here, "GfpramSettingsController.swift"),
+            os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift"))
+print("OK   GfpramSettingsController.swift added")
+
+# SettingsUI: зависимость PromptUI (поле ввода кода)
+patch_plain("gfp-menu-dep", os.path.join(root, "submodules/SettingsUI/BUILD"),
+      r'(        "//submodules/OverlayStatusController:OverlayStatusController",\n)',
+      r'\1        "//submodules/PromptUI:PromptUI",\n')
+
+PEER_INFO = os.path.join(root, "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen")
+# пункт «GFPGRAM» в Настройках
+patch("gfp-menu-enum",
+      r"(enum PeerInfoSettingsSection \{\n)",
+      r"\1    case gfpram\n",
+      base=PEER_INFO, filename="PeerInfoScreen.swift")
+patch("gfp-menu-action",
+      r"(        case \.appearance:\n            push\(themeSettingsController\(context: self\.context\)\)\n)",
+      r"        case .gfpram:\n            push(gfpramSettingsController(context: self.context))\n\1",
+      base=PEER_INFO, filename="PeerInfoScreenSettingsActions.swift")
+patch("gfp-menu-item",
+      r"(    items\[\.advanced\]!\.append\(PeerInfoScreenDisclosureItem\(id: 0, label: notificationsWarning)",
+      r'    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 50, label: .text(AyuSettings.ghostMaster ? "👻" : ""), text: "GFPGRAM", icon: PresentationResourcesSettings.appearance, action: {\n'
+      r'        interaction.openSettings(.gfpram)\n'
+      r'    }))\n\1',
+      base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
+
+# кнопка 👻 в шапке списка чатов
+patch("gfp-ghost-button",
+      r"(        if let proxyButton = self\.proxyButton \{\n            result\.append\(proxyButton\)\n        \}\n)(        return result)",
+      r'\1        if case .chatList(.root) = self.location {\n'
+      r'            result.append(AnyComponentWithIdentity(id: "gfpghost", component: AnyComponent(NavigationButtonComponent(\n'
+      r'                content: .text(title: AyuSettings.ghostMaster ? "👻" : "🙂", isBold: false),\n'
+      r'                pressed: { [weak self] _ in\n'
+      r'                    AyuSettings.setGhostMaster(!AyuSettings.ghostMaster)\n'
+      r'                    self?.parentController?.requestLayout(transition: .immediate)\n'
+      r'                }\n'
+      r'            ))))\n'
+      r'        }\n\2',
+      base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListController.swift")
+
+# удалённый чат: 🗑 + серый цвет в списке чатов
+patch("gfp-deleted-chat",
+      r"(            if let titleAttributedStringValue = titleAttributedString, titleAttributedStringValue\.length == 0 \{)",
+      r'            if let ayuTitle = titleAttributedString, let ayuLast = messages.last, AyuDeleted.contains(ayuLast.id) {\n'
+      r'                titleAttributedString = NSAttributedString(string: "🗑 " + ayuTitle.string, font: titleFont, textColor: theme.titleColor.withMultipliedAlpha(0.5))\n'
+      r'            }\n\1',
+      base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListItem.swift")
+
+# маркеры 🗑 / ✏️ рядом со временем сообщения
+patch("gfp-deleted-bubble",
+      r"public func stringForMessageTimestampStatus\(\n",
+      r'public func stringForMessageTimestampStatus(\n'
+      r'    context: AccountContext,\n'
+      r'    message: EngineMessage,\n'
+      r'    dateTimeFormat: PresentationDateTimeFormat,\n'
+      r'    nameDisplayOrder: PresentationPersonNameOrder,\n'
+      r'    strings: PresentationStrings,\n'
+      r'    format: MessageTimestampStatusFormat = .regular,\n'
+      r'    associatedData: ChatMessageItemAssociatedData,\n'
+      r'    ignoreAuthor: Bool = false\n'
+      r') -> String {\n'
+      r'    let ayuBase = ayuBaseStringForMessageTimestampStatus(context: context, message: message, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameDisplayOrder, strings: strings, format: format, associatedData: associatedData, ignoreAuthor: ignoreAuthor)\n'
+      r'    if AyuDeleted.contains(message.id) {\n'
+      r'        return "🗑 " + ayuBase\n'
+      r'    }\n'
+      r'    if !AyuEditHistory.history(id: message.id).isEmpty {\n'
+      r'        return "✏️ " + ayuBase\n'
+      r'    }\n'
+      r'    return ayuBase\n'
+      r'}\n\n'
+      r'private func ayuBaseStringForMessageTimestampStatus(\n',
+      base=os.path.join(root, "submodules/TelegramUI/Components/Chat/ChatMessageDateAndStatusNode"), filename="StringForMessageTimestampStatus.swift")
+
+# локальный значок «#» рядом с именем
+patch("gfp-badges",
+      r"(    func displayTitle\(strings: PresentationStrings, displayOrder: PresentationPersonNameOrder\) -> String \{\n)(        switch self \{)",
+      r'\1        return AyuBadges.decorate(id: self.id.id._internalGetInt64Value(), title: self.ayuBaseDisplayTitle(strings: strings, displayOrder: displayOrder))\n'
+      r'    }\n\n'
+      r'    private func ayuBaseDisplayTitle(strings: PresentationStrings, displayOrder: PresentationPersonNameOrder) -> String {\n\2',
+      base=os.path.join(root, "submodules/LocalizedPeerData"), filename="PeerTitle.swift")
+
+# обход запрета пересылки/копирования на уровне чата/канала
+patch("bypass-peer",
+      r"(    var isCopyProtectionEnabled: Bool \{\n)(        switch self \{)",
+      r"\1        if AyuSettings.allowCopy { return false }\n\2",
+      filename="PeerUtils.swift")
+
+# сменные иконки: три присланные
+GFP_ICONS = [("GfpAnime", "anime.jpg"), ("GfpWhite", "white.jpg"), ("GfpRed", "red.jpg")]
+try:
+    from PIL import Image as _Image
+    sizes = {"{n}@2x.png": 120, "{n}@3x.png": 180, "{n}Ipad.png": 76, "{n}Ipad@2x.png": 152, "{n}LargeIpad@2x.png": 167,
+             "{n}NotificationIcon.png": 20, "{n}NotificationIcon@2x.png": 40, "{n}NotificationIcon@3x.png": 60}
+    made = 0
+    for name, fn in GFP_ICONS:
+        img = _Image.open(os.path.join(here, "..", "assets", "icons", fn)).convert("RGB")
+        d = os.path.join(app_dir, name + ".alticon")
+        os.makedirs(d, exist_ok=True)
+        for pat, px in sizes.items():
+            img.resize((px, px), _Image.LANCZOS).save(os.path.join(d, pat.format(n=name)))
+            made += 1
+    hits_by_label["gfp-icons-files"] = made
+    print(f"OK   gfp-icons-files: {made} png")
+except Exception as e:
+    print(f"MISSING gfp-icons-files: {e}")
+
+patch_plain("gfp-icons-build", os.path.join(root, "Telegram/BUILD"),
+      r"(alternate_icon_folders = \[\n)",
+      r'\1    "GfpAnime",\n    "GfpWhite",\n    "GfpRed",\n')
+patch("gfp-icons-list",
+      r'(var icons = \[\n)(\s*)(PresentationAppIcon\(name: "BlueIcon")',
+      r'\1\2PresentationAppIcon(name: "GfpAnime", imageName: "GfpAnime"),\n\2PresentationAppIcon(name: "GfpWhite", imageName: "GfpWhite"),\n\2PresentationAppIcon(name: "GfpRed", imageName: "GfpRed"),\n\2\3',
+      base=os.path.join(root, "submodules/TelegramUI/Sources"), filename="AppDelegate.swift")
 
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
