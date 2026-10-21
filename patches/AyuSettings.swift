@@ -17,6 +17,7 @@ public enum AyuSettings {
     public static var ghostScreenshot: Bool { return flag("ayu.ghostScreenshot") }
     public static var ghostConsume: Bool { return flag("ayu.ghostConsume") }
     public static var keepCleared: Bool { return flag("ayu.keepCleared") }
+    public static var keepSelfDestruct: Bool { return flag("ayu.keepSelfDestruct") }
 }
 
 public enum AyuEditHistory {

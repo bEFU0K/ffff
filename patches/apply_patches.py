@@ -1,212 +1,242 @@
 #!/usr/bin/env python3
-"""Патчи Ayu для Telegram-iOS. Печатает OK/MISSING, не падает.
-Использование: apply_patches.py <telegram-dir> [группы,которые,отключить]"""
-import os, re, shutil, sys
+"""Патчи GFPGRAM для Telegram-iOS.
+Использование: apply_patches.py <telegram-dir> [группы,которые,отключить]
+Критичные патчи (название, иконка, App Group) — если не применились, скрипт падает (exit 1),
+чтобы не тратить 2 часа на сборку заведомо нерабочего приложения."""
+import os, re, shutil, sys, json
 
 root = sys.argv[1]
 disabled = set(x.strip() for x in (sys.argv[2] if len(sys.argv) > 2 else "").split(",") if x.strip())
-core = os.path.join(root, "submodules/TelegramCore/Sources")
 here = os.path.dirname(os.path.abspath(__file__))
+core = os.path.join(root, "submodules/TelegramCore/Sources")
+app_dir = os.path.join(root, "Telegram/Telegram-iOS")
+APP_NAME = "GFPGRAM"
+CRITICAL = ["branding-name", "branding-icon", "group-fallback"]
+hits_by_label = {}
 
-shutil.copy(os.path.join(here, "AyuSettings.swift"), os.path.join(core, "AyuSettings.swift"))
-print("OK   AyuSettings.swift added")
-open(os.path.join(core, "AyuSettingsExtra.swift"), "w", encoding="utf-8").write(
-    "import Foundation\n\npublic extension AyuSettings {\n"
-    "    static var keepSelfDestruct: Bool {\n"
-    "        if UserDefaults.standard.object(forKey: \"ayu.keepSelfDestruct\") == nil { return true }\n"
-    "        return UserDefaults.standard.bool(forKey: \"ayu.keepSelfDestruct\")\n"
-    "    }\n}\n")
-print("OK   AyuSettingsExtra.swift added")
-shutil.copy(os.path.join(here, "AyuProfile.swift"), os.path.join(core, "AyuProfile.swift"))
-print("OK   AyuProfile.swift added")
+def read(p):
+    with open(p, encoding="utf-8") as f:
+        return f.read()
 
-swift_files = []
-for d, _, fs in os.walk(core):
-    for f in fs:
-        if f.endswith(".swift") and f not in ("AyuSettings.swift", "AyuProfile.swift", "AyuSettingsExtra.swift"):
-            swift_files.append(os.path.join(d, f))
+def write(p, s):
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s)
 
-def patch(label, pattern, repl, filename=None, flags=re.M | re.S):
+def walk(base, exts=(".swift",)):
+    for d, _, fs in os.walk(base):
+        for f in fs:
+            if f.endswith(exts):
+                yield os.path.join(d, f)
+
+def patch(label, pattern, repl, base=None, filename=None, flags=re.M | re.S):
+    """Применяет regex-замену. filename — имя файла (basename), base — каталог поиска."""
     if label in disabled:
         print(f"SKIP {label}: disabled"); return
-    files = [p for p in swift_files if filename is None or os.path.basename(p) == filename]
+    base = base or core
     total = 0
-    for p in files:
+    for p in walk(base):
+        if filename and os.path.basename(p) != filename:
+            continue
         try:
-            src = open(p, encoding="utf-8").read()
+            src = read(p)
         except Exception:
             continue
         new, n = re.subn(pattern, repl, src, flags=flags)
         if n:
-            open(p, "w", encoding="utf-8").write(new)
+            write(p, new)
             total += n
             print(f"OK   {label}: {n} in {os.path.relpath(p, root)}")
+    hits_by_label[label] = hits_by_label.get(label, 0) + total
     if total == 0:
         print(f"MISSING {label}: anchor not found")
 
-# --- Режим призрака ---
+# ---------- свои Swift-файлы ----------
+shutil.copy(os.path.join(here, "AyuSettings.swift"), os.path.join(core, "AyuSettings.swift"))
+shutil.copy(os.path.join(here, "AyuProfile.swift"), os.path.join(core, "AyuProfile.swift"))
+print("OK   Ayu*.swift added")
+
+# ---------- Режим призрака ----------
+# Прочитано: не отправляем readHistory на сервер (локально чат остаётся прочитанным)
 patch("ghost-read",
-      r"(func synchronizePeerReadState\([^{]*?\)\s*->\s*Signal<Never, NoError>\s*\{)",
-      r"\1\n    if AyuSettings.ghostRead { return .complete() }",
-      filename="ManagedSynchronizePeerReadStates.swift")
+      r"(func pushPeerReadState\([^{]*?readState: PeerReadState\)\s*->\s*Signal<PeerReadState, PeerReadStateValidationError>\s*\{)",
+      r"\1\n    if AyuSettings.ghostRead { return .single(readState) }",
+      filename="SynchronizePeerReadState.swift")
 
 patch("ghost-typing",
-      r"(func requestActivity\([^{]*?\)\s*->\s*Signal<Void, NoError>\s*\{)",
+      r"(private func requestActivity\([^{]*?\)\s*->\s*Signal<Void, NoError>\s*\{)",
       r"\1\n    if AyuSettings.ghostTyping { return .complete() }",
       filename="ManagedLocalInputActivities.swift")
 
 patch("ghost-online",
-      r"account\.updateStatus\(offline: ([^)]*)\)",
-      r"account.updateStatus(offline: AyuSettings.ghostOnline ? .boolTrue : \1)")
+      r"account\.updateStatus\(offline: \.boolFalse\)",
+      r"account.updateStatus(offline: AyuSettings.ghostOnline ? .boolTrue : .boolFalse)",
+      filename="ManagedAccountPresence.swift")
 
 patch("ghost-stories",
       r"(func _internal_markStoryAsSeen\([^{]*?\)\s*->\s*Signal<Never, NoError>\s*\{)",
       r"\1\n    if AyuSettings.ghostStories { return .complete() }")
 
-# --- Удалённые сообщения ---
-patch("keep-deleted",
-      r"^(\s*)(transaction\.deleteMessages\([^\n]*\))[ \t]*$",
-      r"\1if !AyuSettings.keepDeleted { \2 }",
-      filename="AccountStateManagementUtils.swift", flags=re.M)
-
-# --- История правок: запоминаем старый текст перед применением правки ---
-patch("edit-history",
-      r"(case let \.EditMessage\(id, [A-Za-z_]+\):)",
-      r"\1\n                    if let ayuPrev = transaction.getMessage(id) { AyuEditHistory.record(id: id, text: ayuPrev.text) }",
-      filename="AccountStateManagementUtils.swift")
-
-# --- Скрытие рекламы (спонсорских сообщений) ---
-patch("hide-ads",
-      r"(func _internal_getSponsoredMessages\([^{]*?\)\s*->\s*Signal<[^{]*?,\s*NoError>\s*\{)",
-      r"\1\n    if AyuSettings.hideAds { return .single(nil) }")
-
-# --- Сохранение контента из каналов с запретом копирования ---
-patch("allow-copy",
-      r"(func isCopyProtected\(\)\s*->\s*Bool\s*\{)",
-      r"\1\n        if AyuSettings.allowCopy { return false }")
-
-# --- Не отправлять уведомления о скриншотах ---
 patch("ghost-screenshot",
-      r"(func [A-Za-z_]*[sS]creenshot[A-Za-z_]*\([^{]*?\)\s*->\s*Signal<(?:Never|Void), NoError>\s*\{)",
+      r"(func _internal_addSecretChatMessageScreenshot\([^{]*?\)\s*->\s*Signal<Void, NoError>\s*\{)",
       r"\1\n    if AyuSettings.ghostScreenshot { return .complete() }")
 
-# --- Не отправлять «прослушано/просмотрено» для голосовых, кружков, view-once ---
+# «Прослушано»/просмотрено: локально помечаем, но на сервер не синхронизируем
 patch("ghost-consume",
-      r"(func [A-Za-z_]*[mM]arkMessageContentAsConsumed[A-Za-z_]*\([^{]*?\)\s*->\s*Signal<Never, NoError>\s*\{)",
-      r"\1\n    if AyuSettings.ghostConsume { return .complete() }")
+      r"(func addSynchronizeConsumeMessageContentsOperation\(transaction: Transaction, messageIds: \[MessageId\]\)\s*\{)",
+      r"\1\n    if AyuSettings.ghostConsume { return }",
+      filename="SynchronizeConsumeMessageContentsOperation.swift")
 
-# --- Сохранять историю, если собеседник очистил чат у обоих ---
+# ---------- Удалённые сообщения / история ----------
+patch("keep-deleted",
+      r"(case let \.DeleteMessages\(ids\):\n)",
+      r"\1                if AyuSettings.keepDeleted { break }\n",
+      filename="AccountStateManagementUtils.swift")
+patch("keep-deleted",
+      r"(case let \.DeleteMessagesWithGlobalIds\(ids\):\n)",
+      r"\1                if AyuSettings.keepDeleted { break }\n",
+      filename="AccountStateManagementUtils.swift")
+
 patch("keep-cleared",
-      r"^(\s*)(transaction\.clearHistory\([^\n]*\))[ \t]*$",
-      r"\1if !AyuSettings.keepCleared { \2 }",
-      filename="AccountStateManagementUtils.swift", flags=re.M)
+      r"(case let \.UpdateMinAvailableMessage\(id\):\n)",
+      r"\1                if AyuSettings.keepCleared { break }\n",
+      filename="AccountStateManagementUtils.swift")
 
-# --- ЭКСПЕРИМЕНТАЛЬНО: строка «ID · DC · страна» в профиле пользователя (UI, по умолчанию отключено) ---
-def patch_ui(label, pattern, repl):
-    if label in disabled:
-        print(f"SKIP {label}: disabled"); return
-    hits = 0
-    for d, _, fs in os.walk(os.path.join(root, "submodules/TelegramUI")):
-        for f in fs:
-            if f == "PeerInfoScreen.swift":
-                p = os.path.join(d, f)
-                src = open(p, encoding="utf-8").read()
-                new, n = re.subn(pattern, repl, src, flags=re.M)
-                if n:
-                    open(p, "w", encoding="utf-8").write(new); hits += n
-                    print(f"OK   {label}: {n} in {os.path.relpath(p, root)}")
-    if hits == 0:
-        print(f"MISSING {label}: anchor not found")
+patch("edit-history",
+      r"(case let \.EditMessage\(id, [A-Za-z_]+\):\n)",
+      r"\1                if let ayuPrev = transaction.getMessage(id) { AyuEditHistory.record(id: id, text: ayuPrev.text) }\n",
+      filename="AccountStateManagementUtils.swift")
 
-patch_ui("profile-info",
-         r"^(\s*)(if let user = data\.peer as\? TelegramUser \{)\s*$",
-         r"\1\2\n\1    items[.peerInfo, default: []].append(PeerInfoScreenLabeledValueItem(id: 9001, label: \"Ayu\", text: AyuProfile.infoText(for: user), textColor: .primary, action: nil, longTapAction: nil, requestLayout: { _ in }))")
+# Самоудаляющиеся сообщения не стираются
+patch("keep-selfdestruct",
+      r"if message\.id\.peerId\.namespace == Namespaces\.Peer\.SecretChat \|\| isRemove \{",
+      r"if AyuSettings.keepSelfDestruct {\n                        } else if message.id.peerId.namespace == Namespaces.Peer.SecretChat || isRemove {",
+      filename="ManagedAutoremoveMessageOperations.swift")
 
-# ================= Брендинг GFPGRAM =================
-APP_NAME = "GFPGRAM"
-app_dir = os.path.join(root, "Telegram/Telegram-iOS")
+# ---------- Реклама ----------
+patch("hide-ads",
+      r"(\n    func activate\(\) \{\n)",
+      r"\1        if AyuSettings.hideAds { return }\n",
+      filename="AdMessages.swift")
 
+# ---------- Копирование из закрытых каналов ----------
+patch("allow-copy",
+      r"(func isCopyProtected\(\)\s*->\s*Bool\s*\{)",
+      r"\1\n        if AyuSettings.allowCopy { return false }",
+      filename="MessageUtils.swift")
+
+# ---------- Инфо в профиле (экспериментально, по умолчанию выключено) ----------
+patch("profile-info",
+      r"^(\s*)(if let user = data\.peer as\? TelegramUser \{)\s*$",
+      r"\1\2\n\1    items[.peerInfo, default: []].append(PeerInfoScreenLabeledValueItem(id: 9001, label: \"Ayu\", text: AyuProfile.infoText(for: user), textColor: .primary, action: nil, longTapAction: nil, requestLayout: { _ in }))",
+      base=os.path.join(root, "submodules/TelegramUI"), filename="PeerInfoScreen.swift", flags=re.M)
+
+# ======================= БРЕНДИНГ =======================
+# 1) Название. В актуальном Telegram-iOS оно зашито в Telegram/BUILD (plist_fragment), а не в Info.plist.
 if "branding-name" in disabled:
     print("SKIP branding-name: disabled")
 else:
-    hits = 0
+    n_total = 0
+    build_path = os.path.join(root, "Telegram/BUILD")
+    if os.path.exists(build_path):
+        s = read(build_path)
+        s, n1 = re.subn(r"(<key>CFBundleDisplayName</key>\s*<string>)Telegram(</string>)", r"\g<1>%s\g<2>" % APP_NAME, s)
+        # CFBundleName — только в TelegramInfoPlist (главное приложение)
+        m = re.search(r'name = "TelegramInfoPlist".*?\n\)', s, flags=re.S)
+        n2 = 0
+        if m:
+            block, n2 = re.subn(r"(<key>CFBundleName</key>\s*<string>)Telegram(</string>)", r"\g<1>%s\g<2>" % APP_NAME, m.group(0))
+            s = s[:m.start()] + block + s[m.end():]
+        write(build_path, s)
+        n_total += n1 + n2
+        print(f"OK   branding-name: Telegram/BUILD DisplayName x{n1}, BundleName x{n2}")
+    # старые версии: Info.plist / InfoPlist.strings
     for d, _, fs in os.walk(app_dir):
         for f in fs:
             p = os.path.join(d, f)
             if f == "Info.plist":
                 s = open(p, encoding="utf-8", errors="ignore").read()
-                n2, c = re.subn(r"(<key>(?:CFBundleDisplayName|CFBundleName)</key>\s*<string>)[^<]*(</string>)", r"\g<1>%s\g<2>" % APP_NAME, s)
-                if c: open(p, "w", encoding="utf-8").write(n2); hits += c
+                s2, c = re.subn(r"(<key>(?:CFBundleDisplayName|CFBundleName)</key>\s*<string>)[^<$]*(</string>)", r"\g<1>%s\g<2>" % APP_NAME, s)
+                if c: write(p, s2); n_total += c
             elif f == "InfoPlist.strings":
                 s = open(p, encoding="utf-8", errors="ignore").read()
-                n2, c = re.subn(r'("CFBundle(?:DisplayName|Name)"\s*=\s*)"[^"]*";', r'\1"%s";' % APP_NAME, s)
-                if c: open(p, "w", encoding="utf-8").write(n2); hits += c
-    print(f"OK   branding-name: {hits} replacement(s)" if hits else "MISSING branding-name: Info.plist keys not found")
+                s2, c = re.subn(r'("CFBundle(?:DisplayName|Name)"\s*=\s*)"[^"]*";', r'\1"%s";' % APP_NAME, s)
+                if c: write(p, s2); n_total += c
+    hits_by_label["branding-name"] = n_total
+    if n_total == 0:
+        print("MISSING branding-name")
 
+# 2) Иконка. Основная иконка — Telegram.icon (Icon Composer, iOS 26), плюс PNG альтернативных иконок.
 if "branding-icon" in disabled:
     print("SKIP branding-icon: disabled")
 else:
     try:
         from PIL import Image
         src_icon = Image.open(os.path.join(here, "..", "assets", "icon.png")).convert("RGB")
-        hits = 0
+        n = 0
+        # 2a) Telegram.icon -> один PNG-слой на весь холст
+        icon_pkg = os.path.join(app_dir, "Telegram.icon")
+        if os.path.isdir(icon_pkg):
+            shutil.rmtree(icon_pkg)
+            os.makedirs(os.path.join(icon_pkg, "Assets"))
+            src_icon.resize((1024, 1024), Image.LANCZOS).save(os.path.join(icon_pkg, "Assets", "icon.png"))
+            doc = {
+                "fill": {"solid": "srgb:1.00000,1.00000,1.00000,1.00000"},
+                "groups": [{"layers": [{"glass": False, "image-name": "icon.png", "name": "icon"}],
+                            "shadow": {"kind": "neutral", "opacity": 0.5},
+                            "translucency": {"enabled": False, "value": 0.5}}],
+                "supported-platforms": {"circles": ["watchOS"], "squares": "shared"},
+            }
+            with open(os.path.join(icon_pkg, "icon.json"), "w") as f:
+                json.dump(doc, f, indent=2)
+            n += 1
+            print("OK   branding-icon: Telegram.icon replaced")
+        # 2b) все PNG в *.appiconset и *.alticon и IconDefault-*.png
         for d, _, fs in os.walk(app_dir):
-            if not d.endswith(".appiconset"):
+            in_icons = d.endswith((".appiconset", ".alticon")) or os.path.basename(d) == "Telegram-iOS"
+            if not in_icons:
                 continue
             for f in fs:
-                if f.lower().endswith(".png"):
-                    p = os.path.join(d, f)
-                    try:
-                        w, h = Image.open(p).size
-                        src_icon.resize((w, h), Image.LANCZOS).save(p)
-                        hits += 1
-                    except Exception as e:
-                        print(f"WARN icon {f}: {e}")
-        print(f"OK   branding-icon: {hits} png replaced" if hits else "MISSING branding-icon: no *.appiconset png found")
+                if not f.lower().endswith(".png"):
+                    continue
+                if os.path.basename(d) == "Telegram-iOS" and not f.startswith("IconDefault"):
+                    continue
+                p = os.path.join(d, f)
+                try:
+                    w, h = Image.open(p).size
+                    src_icon.resize((w, h), Image.LANCZOS).save(p)
+                    n += 1
+                except Exception as e:
+                    print(f"WARN icon {f}: {e}")
+        hits_by_label["branding-icon"] = n
+        print(f"OK   branding-icon: {n} items")
     except ImportError:
         print("MISSING branding-icon: Pillow not installed")
 
-# Надпись «Владелец» -> «#»
+# 3) «Владелец» -> «#»
 if "owner-hash" in disabled:
     print("SKIP owner-hash: disabled")
 else:
-    hits = 0
+    n = 0
     for d, _, fs in os.walk(app_dir):
         for f in fs:
             if f == "Localizable.strings":
                 p = os.path.join(d, f)
                 s = open(p, encoding="utf-8", errors="ignore").read()
-                n2, c = re.subn(r'^("(?:Channel|Group)\.Management\.Label(?:Owner|Creator)"\s*=\s*)"[^"]*";', r'\1"#";', s, flags=re.M)
-                if c: open(p, "w", encoding="utf-8").write(n2); hits += c
-    print(f"OK   owner-hash (bundled strings): {hits}" if hits else "MISSING owner-hash: bundled key not found")
-    # серверный языковой пакет (ru и др.) перекрывает встроенные строки — подменяем при загрузке
-    pres = os.path.join(root, "submodules/TelegramPresentationData")
-    done = 0
-    for d, _, fs in os.walk(pres):
-        for f in fs:
-            if f.endswith(".swift"):
-                p = os.path.join(d, f)
-                s = open(p, encoding="utf-8", errors="ignore").read()
-                n2, c = re.subn(
-                    r"(class PresentationStringsComponent[^{]*\{.*?init\([^)]*dict: \[String: String\][^)]*\)\s*\{[^}]*?)self\.dict = dict",
-                    r'\1var ayuDict = dict; ayuDict["Channel.Management.LabelOwner"] = "#"; ayuDict["Channel.Management.LabelCreator"] = "#"; self.dict = ayuDict',
-                    s, count=1, flags=re.S)
-                if c: open(p, "w", encoding="utf-8").write(n2); done += c; print(f"OK   owner-hash (lang packs): {os.path.relpath(p, root)}")
-    if not done:
-        print("MISSING owner-hash (lang packs): в русском пакете останется «Владелец»")
+                s2, c = re.subn(r'^("Channel\.Management\.Label(?:Owner|Creator)"\s*=\s*)"[^"]*";', r'\1"#";', s, flags=re.M)
+                if c: write(p, s2); n += c
+    print(f"OK   owner-hash (bundled): {n}" if n else "MISSING owner-hash (bundled)")
+    # серверный языковой пакет перекрывает встроенные строки
+    patch("owner-hash",
+          r"(public func dictFromLocalization\(_ value: Localization\) -> \[String: String\] \{.*?)(\n    return dict\n\})",
+          r'\1\n    dict["Channel.Management.LabelOwner"] = "#"\n    dict["Channel.Management.LabelCreator"] = "#"\2',
+          base=os.path.join(root, "submodules/TelegramPresentationData"), filename="PresentationData.swift")
 
-# --- Самоудаляющиеся сообщения: не стирать при истечении таймера ---
-patch("keep-selfdestruct",
-      r"^(\s*)(transaction\.deleteMessages\([^\n]*\))[ \t]*$",
-      r"\1if !AyuSettings.keepSelfDestruct { \2 }",
-      filename="ManagedAutoremoveMessageOperations.swift", flags=re.M)
-
-# ================= Sideloadly / бесплатный Apple ID: без App Group приложение висит на чёрном экране =================
-# Бесплатный аккаунт не выдаёт App Groups, containerURL(...) возвращает nil, Telegram не стартует.
-# Если контейнера группы нет, подставляем обычную папку в Documents (все расширения при установке удаляются).
+# ======================= Чёрный экран на Sideloadly =======================
+# Бесплатный Apple ID не даёт App Groups: containerURL(...) == nil, AppDelegate показывает «Error 2»
+# и выходит -> чёрный экран. Подставляем обычную папку в Application Support.
 GROUP_FALLBACK = (
     "{ () -> URL? in "
-    "guard let ayuBase = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }; "
+    "guard let ayuBase = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }; "
     "let ayuUrl = ayuBase.appendingPathComponent(\"gfp-group\", isDirectory: true); "
     "try? FileManager.default.createDirectory(at: ayuUrl, withIntermediateDirectories: true, attributes: nil); "
     "return ayuUrl }()"
@@ -214,58 +244,28 @@ GROUP_FALLBACK = (
 if "group-fallback" in disabled:
     print("SKIP group-fallback: disabled")
 else:
-    rx = re.compile(r"\b(let|var)\s+maybeAppGroupUrl(?:\s*:\s*URL\?)?\s*=\s*FileManager\.default\.containerURL\(forSecurityApplicationGroupIdentifier:\s*([^)]*)\)")
-    hits = 0
-    for d, _, fs in os.walk(app_dir):
-        for f in fs:
-            if not f.endswith(".swift"):
-                continue
-            p = os.path.join(d, f)
-            try:
-                src = open(p, encoding="utf-8").read()
-            except Exception:
-                continue
-            new, n = rx.subn(lambda m: "%s maybeAppGroupUrl: URL? = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: %s) ?? %s" % (m.group(1), m.group(2), GROUP_FALLBACK), src)
-            if n:
-                open(p, "w", encoding="utf-8").write(new); hits += n
-                print(f"OK   group-fallback: {n} in {os.path.relpath(p, root)}")
-    if hits == 0:
-        print("MISSING group-fallback: anchor not found (смотри DIAG group-fallback ниже)")
-
-# ================= Диагностика: где искать якоря для ненайденных патчей =================
-DIAG = {
-    "ghost-read": r"func [A-Za-z_]*(ReadState|readHistory|ReadHistory|applyMaxReadIndex|markMessagesAsRead)[A-Za-z_]*\(",
-    "hide-ads": r"func [A-Za-z_]*[sS]ponsored[A-Za-z_]*\(",
-    "ghost-consume": r"func [A-Za-z_]*[cC]onsum[A-Za-z_]*\(",
-    "keep-cleared": r"clearHistory\(",
-    "keep-selfdestruct": r"ExpiredContent|AutoremoveTimeoutMessageAttribute|AutoclearTimeoutMessageAttribute",
-    "ghost-consume2": r"ConsumePersonal|MessageContentConsumed|consumePersonalMessage|markMessageContentAsConsumed|readMessageContents",
-}
-for label, rx in DIAG.items():
+    rx = re.compile(r"\b(let|var)\s+maybeAppGroupUrl(?:\s*:\s*URL\?)?\s*=\s*FileManager\.default\.containerURL\(forSecurityApplicationGroupIdentifier:\s*([^)\n]*)\)")
     n = 0
-    for p in swift_files:
-        try:
-            for i, line in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
-                if re.search(rx, line):
-                    n += 1
-                    if n <= 30:
-                        print(f"DIAG {label}: {os.path.relpath(p, root)}:{i}: {line.strip()[:170]}")
-        except Exception:
-            pass
-
-# где ещё используется контейнер App Group
-n = 0
-for base in (os.path.join(root, "Telegram"), os.path.join(root, "submodules")):
-    for d, _, fs in os.walk(base):
-        for f in fs:
-            if not f.endswith((".swift", ".m", ".mm")):
-                continue
-            p = os.path.join(d, f)
+    for base in (os.path.join(root, "submodules"), app_dir):
+        for p in walk(base):
             try:
-                for i, line in enumerate(open(p, encoding="utf-8", errors="ignore"), 1):
-                    if "forSecurityApplicationGroupIdentifier" in line or "maybeAppGroupUrl" in line:
-                        n += 1
-                        if n <= 40:
-                            print(f"DIAG group-fallback: {os.path.relpath(p, root)}:{i}: {line.strip()[:170]}")
+                src = read(p)
             except Exception:
-                pass
+                continue
+            new, c = rx.subn(lambda m: "%s maybeAppGroupUrl: URL? = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: %s) ?? %s" % (m.group(1), m.group(2), GROUP_FALLBACK), src)
+            if c:
+                write(p, new); n += c
+                print(f"OK   group-fallback: {c} in {os.path.relpath(p, root)}")
+    hits_by_label["group-fallback"] = n
+    if n == 0:
+        print("MISSING group-fallback")
+
+# ======================= Итог =======================
+bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
+for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "hide-ads", "ghost-consume", "keep-selfdestruct"):
+    if l not in disabled and hits_by_label.get(l, 0) == 0:
+        print(f"::warning::патч {l} не применился (якорь не найден) — функция работать не будет")
+if bad:
+    print(f"::error::Критичные патчи не применились: {', '.join(bad)}. Сборка остановлена.")
+    sys.exit(1)
+print("ALL CRITICAL PATCHES OK")
