@@ -86,7 +86,7 @@ final class GfpramIconCarouselView: UIView {
     private let lockView = UIImageView()
     private var keys: [String] = []
     private var index: Int = 0
-    private var timer: Timer?
+    private var timer: Foundation.Timer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -143,7 +143,7 @@ final class GfpramIconCarouselView: UIView {
         if self.timer != nil || self.keys.count < 2 {
             return
         }
-        let timer = Timer(timeInterval: 2.8, repeats: true, block: { [weak self] _ in
+        let timer = Foundation.Timer(timeInterval: 2.8, repeats: true, block: { [weak self] _ in
             self?.advance()
         })
         RunLoop.main.add(timer, forMode: .common)
