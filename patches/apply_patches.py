@@ -956,6 +956,28 @@ def adapt_text_content():
 
 adapt_text_content()
 
+# ---------- Диагностика ListViewItem (для ошибок компиляции GfpramPremiumUI.swift) ----------
+# В логе сборки печатаем реальные определения из чекаута: протокол ListViewItem и init у ListViewItemNode.
+def _print_listview_api():
+    seen_proto = seen_init = False
+    for p in walk(os.path.join(root, "submodules/Display")):
+        try: src = read(p)
+        except Exception: continue
+        if not seen_proto:
+            m = re.search(r"public protocol ListViewItem\b[^{]*\{(.*?)^\}", src, re.S | re.M)
+            if m:
+                seen_proto = True
+                print("INFO listview-protocol file: " + os.path.relpath(p, root))
+                for line in m.group(1).split("\n"):
+                    if line.strip(): print("INFO listview-protocol: " + line.strip()[:260])
+        if not seen_init and re.search(r"class\s+ListViewItemNode\b", src):
+            for m in re.finditer(r"^\s*(?:public\s+)?(?:required\s+)?(?:convenience\s+)?init\([^{]*", src, re.M):
+                seen_init = True
+                print("INFO listview-node-init: " + " ".join(m.group(0).split())[:260])
+        if seen_proto and seen_init: break
+    if not seen_proto: print("INFO listview-protocol: не найден")
+_print_listview_api()
+
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
 for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "edit-history", "hide-ads", "ghost-consume", "keep-selfdestruct", "forward-copy", "more-accounts", "gfp-context-menu", "gfp-premium-start"):

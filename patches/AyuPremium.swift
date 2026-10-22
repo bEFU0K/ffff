@@ -119,7 +119,7 @@ private final class AyuPremiumStore: @unchecked Sendable {
 public enum AyuPremium {
     public static let price = "150 ₽"
     public static let supportUsername = "gfpgram_support"
-    public static let buyText = "купить премиум на месяц"
+    public static let buyText = "Здравствуйте! Хочу купить GFPGRAM Premium на месяц (\(price)). Подскажите, как оплатить?"
     /// ВАЖНО: смени эту строку на свою до сборки. Ключи, выданные с другим секретом, не подойдут.
     private static let secret = "gfpgram-premium-CHANGE-ME-2026"
 
