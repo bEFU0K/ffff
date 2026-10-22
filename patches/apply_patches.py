@@ -978,6 +978,39 @@ def _print_listview_api():
     if not seen_proto: print("INFO listview-protocol: не найден")
 _print_listview_api()
 
+# Новые версии Telegram-iOS заменили previousItem/nextItem на neighbors: ... в ListViewItem.
+# Смотрим протокол в чекауте и подгоняем сигнатуры GfpramPremiumHeaderItem.
+def _adapt_listview_item():
+    proto = None
+    for p in walk(os.path.join(root, "submodules/Display")):
+        try: src = read(p)
+        except Exception: continue
+        m = re.search(r"public protocol ListViewItem\b[^{]*\{(.*?)^\}", src, re.S | re.M)
+        if m:
+            proto = m.group(1); break
+    target = os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumUI.swift")
+    if proto is None or not os.path.exists(target):
+        print("::warning::gfp-listview: не нашёл протокол ListViewItem или GfpramPremiumUI.swift, сигнатуры не трогаю"); return
+    src = read(target)
+    old_pair = "previousItem: ListViewItem?, nextItem: ListViewItem?"
+    for fn in ("nodeConfiguredForParams", "updateNode"):
+        typ = None
+        k = proto.find("func " + fn + "(")
+        if k >= 0:
+            nxt = proto.find("func ", k + 5)
+            m = re.search(r"\bneighbors\s*:\s*([A-Za-z_][\w.]*)", proto[k:nxt if nxt > 0 else len(proto)])
+            if m: typ = m.group(1)
+        if not typ:
+            continue
+        i = src.find("func " + fn + "(")
+        j = src.find(old_pair, i) if i >= 0 else -1
+        if j < 0 or src.find("\n", i) < j:
+            print(f"::warning::gfp-listview: {fn}: не нашёл previousItem/nextItem в GfpramPremiumUI.swift"); continue
+        src = src[:j] + "neighbors: " + typ + src[j + len(old_pair):]
+        print(f"OK   gfp-listview: {fn}(... neighbors: {typ} ...)")
+    write(target, src)
+_adapt_listview_item()
+
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
 for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "edit-history", "hide-ads", "ghost-consume", "keep-selfdestruct", "forward-copy", "more-accounts", "gfp-context-menu", "gfp-premium-start"):
