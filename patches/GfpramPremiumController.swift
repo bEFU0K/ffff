@@ -67,7 +67,7 @@ public func gfpramOpenSupport(context: AccountContext) {
     })
 }
 
-private func gfpramAlert(context: AccountContext, title: String?, text: String, actions: [TextAlertAction]? = nil) -> ViewController {
+func gfpramAlert(context: AccountContext, title: String?, text: String, actions: [TextAlertAction]? = nil) -> ViewController {
     return textAlertController(context: context, title: title, text: text, actions: actions ?? [TextAlertAction(type: .defaultAction, title: "OK", action: {})])
 }
 
@@ -78,26 +78,66 @@ private func gfpramShort(_ text: String, _ limit: Int = 22) -> String {
 
 // MARK: - Окно GFPGRAM Premium
 
+private func gfpramToggleKey(_ kind: Int32) -> String? {
+    switch kind {
+    case 31:
+        return "premiumStub"
+    case 32:
+        return "premiumBackup"
+    case 33:
+        return "premiumStar"
+    case 34:
+        return "premiumDmReply"
+    case 35:
+        return "premiumKeyword"
+    case 36:
+        return "premiumMirror"
+    case 37:
+        return "premiumReact"
+    case 38:
+        return "premiumMentions"
+    default:
+        return nil
+    }
+}
+
+private func gfpramMode(_ key: String) -> Int32 {
+    return AyuPremium.isActive && AyuSettings.value(key) ? 2 : 1
+}
+
 private func gfpramPremiumEntries() -> [GfpramEntry] {
     var entries: [GfpramEntry] = []
-    entries.append(.header(0, "GFPGRAM PREMIUM"))
+    entries.append(.header(0, "ПОДПИСКА"))
     entries.append(.action(1, "Статус", AyuPremium.statusText, 0))
     entries.append(.action(2, "Цена", AyuPremium.price + " / месяц", 0))
     entries.append(.action(3, "Купить премиум", "", 1))
     entries.append(.action(4, "Активировать ключ", "", 2))
     entries.append(.footer(5, "Кнопка «Купить премиум» отправит в @\(AyuPremium.supportUsername) сообщение «\(AyuPremium.buyText)». После оплаты вам пришлют ключ — введите его через «Активировать ключ». Ключ привязан к вашему аккаунту и действует до даты, которую поставил администратор."))
 
-    entries.append(.header(100, "ФУНКЦИИ PREMIUM"))
-    entries.append(.action(101, "Спам сообщениями", "", 10))
-    entries.append(.toggle(102, "Заглушка, когда тегают в группе", "premiumStub", AyuSettings.value("premiumStub")))
-    entries.append(.action(103, "Текст заглушки", gfpramShort(AyuPremiumService.stubText), 11))
-    entries.append(.toggle(104, "Бэкап данных аккаунта", "premiumBackup", AyuSettings.value("premiumBackup")))
-    entries.append(.action(105, "Бэкапы аккаунтов", String(AyuBackup.entries().count), 12))
-    entries.append(.toggle(106, "⭐ рядом с моим именем", "premiumStar", AyuSettings.value("premiumStar")))
-    entries.append(.footer(107, "Заглушка отвечает один раз в 2 минуты на каждую группу и только пока приложение запущено. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS, поэтому данные остаются после удаления приложения. Сам вход (сессию) бэкап не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
+    entries.append(.header(100, "ПРЕИМУЩЕСТВА ПОДПИСКИ"))
+    entries.append(.feature(101, "Эксклюзивные иконки приложения", "Золото, Турбо, Лунная ночь и Утёнок: 4 иконки только для Premium. Нажмите, чтобы посмотреть и выбрать.", 40, 10, 0))
+    entries.append(.feature(102, "Спам сообщениями", "Серия сообщений в выбранный чат с вашей паузой и счётчиком.", 10, 1, 0))
+    entries.append(.feature(103, "Заглушка при упоминании", "Автоответ вашим текстом, когда вас тегают в группе. Раз в 2 минуты на группу.", 31, 2, gfpramMode("premiumStub")))
+    entries.append(.feature(104, "Бэкап данных аккаунта", "Имя, ID, юзернейм и номер сохраняются в связку ключей iOS и переживают удаление приложения.", 32, 3, gfpramMode("premiumBackup")))
+    entries.append(.feature(105, "⭐ рядом с моим именем", "Звезда рядом с вашим именем на этом устройстве.", 33, 4, gfpramMode("premiumStar")))
+    entries.append(.feature(106, "Автоответчик в личных чатах", "Отвечает вашим текстом каждому, кто пишет вам в личку. Раз в 10 минут на человека.", 34, 5, gfpramMode("premiumDmReply")))
+    entries.append(.feature(107, "Ответ на слово-триггер", "Слово в сообщении — и приложение само отправляет заданный ответ. Личные чаты и группы.", 35, 6, gfpramMode("premiumKeyword")))
+    entries.append(.feature(108, "Копия личных сообщений в Избранное", "Все входящие личные сообщения дублируются в «Избранное», даже если собеседник их удалит.", 36, 7, gfpramMode("premiumMirror")))
+    entries.append(.feature(109, "Авто-реакция на личные сообщения", "Ставит выбранную реакцию на каждое входящее личное сообщение.", 37, 8, gfpramMode("premiumReact")))
+    entries.append(.feature(110, "Журнал упоминаний", "Каждое упоминание вас в группе копируется в «Избранное» с названием чата.", 38, 9, gfpramMode("premiumMentions")))
+    entries.append(.footer(111, "Нажмите на функцию, чтобы включить или выключить её. Тексты, слово-триггер и реакция настраиваются ниже."))
 
-    entries.append(.header(200, "ПОДДЕРЖКА"))
-    entries.append(.action(201, "Тех-поддержка", "@" + AyuPremium.supportUsername, 20))
+    entries.append(.header(200, "НАСТРОЙКИ ФУНКЦИЙ"))
+    entries.append(.action(201, "Текст заглушки", gfpramShort(AyuPremiumService.stubText), 11))
+    entries.append(.action(202, "Текст автоответчика", gfpramShort(AyuPremiumService.dmReplyText), 13))
+    entries.append(.action(203, "Слово-триггер", AyuPremiumService.keywordTrigger.isEmpty ? "не задано" : gfpramShort(AyuPremiumService.keywordTrigger), 14))
+    entries.append(.action(204, "Ответ на слово", AyuPremiumService.keywordReply.isEmpty ? "не задан" : gfpramShort(AyuPremiumService.keywordReply), 15))
+    entries.append(.action(205, "Реакция", AyuPremiumService.reactEmoji, 16))
+    entries.append(.action(206, "Бэкапы аккаунтов", String(AyuBackup.entries().count), 12))
+    entries.append(.footer(207, "Автоответы и копии работают только пока приложение запущено. Автоответ не отправляется ботам. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS; сам вход (сессию) он не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
+
+    entries.append(.header(300, "ПОДДЕРЖКА"))
+    entries.append(.iconAction(301, "Тех-поддержка", "@" + AyuPremium.supportUsername, 20, 101))
     return entries
 }
 
@@ -110,20 +150,37 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
         presentImpl?(gfpramAlert(context: context, title: "Нужен GFPGRAM Premium", text: "Функция доступна по подписке: \(AyuPremium.price) в месяц. Нажмите «Купить премиум» вверху этого окна."))
     }
 
+    let promptText: (String, String, @escaping (String) -> Void) -> Void = { title, current, apply in
+        if !AyuPremium.isActive {
+            needPremium()
+            return
+        }
+        presentImpl?(promptController(context: context, text: title, value: current, placeholder: "", apply: { value in
+            guard let value = value else {
+                return
+            }
+            apply(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            refresh.set(true)
+        }))
+    }
+
     let arguments = GfpramArguments(
-        toggle: { key, newValue in
-            if !AyuPremium.isActive {
-                needPremium()
+        toggle: { _, _ in
+        },
+        perform: { kind in
+            if let key = gfpramToggleKey(kind) {
+                if !AyuPremium.isActive {
+                    needPremium()
+                    return
+                }
+                let newValue = !AyuSettings.value(key)
+                AyuSettings.set(key, newValue)
+                if key == "premiumBackup" && newValue {
+                    AyuPremiumService.snapshot(account: context.account)
+                }
                 refresh.set(true)
                 return
             }
-            AyuSettings.set(key, newValue)
-            if key == "premiumBackup" && newValue {
-                AyuPremiumService.snapshot(account: context.account)
-            }
-            refresh.set(true)
-        },
-        perform: { kind in
             switch kind {
             case 1:
                 presentImpl?(gfpramAlert(context: context, title: "Купить GFPGRAM Premium", text: "Цена \(AyuPremium.price) за месяц. В @\(AyuPremium.supportUsername) будет отправлено сообщение «\(AyuPremium.buyText)».", actions: [
@@ -165,26 +222,35 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
                     needPremium()
                 }
             case 11:
-                if !AyuPremium.isActive {
-                    needPremium()
-                    return
-                }
-                presentImpl?(promptController(context: context, text: "Текст заглушки", value: AyuPremiumService.stubText, placeholder: "", apply: { value in
-                    guard let value = value else {
-                        return
-                    }
-                    let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    AyuPremiumService.stubText = clean
-                    refresh.set(true)
-                }))
+                promptText("Текст заглушки", AyuPremiumService.stubText, { value in
+                    AyuPremiumService.stubText = value
+                })
             case 12:
                 if AyuPremium.isActive {
                     pushImpl?(gfpramBackupController(context: context))
                 } else {
                     needPremium()
                 }
+            case 13:
+                promptText("Текст автоответчика в личных чатах", AyuPremiumService.dmReplyText, { value in
+                    AyuPremiumService.dmReplyText = value
+                })
+            case 14:
+                promptText("Слово-триггер (ищется в входящих сообщениях)", AyuPremiumService.keywordTrigger, { value in
+                    AyuPremiumService.keywordTrigger = value
+                })
+            case 15:
+                promptText("Ответ на слово-триггер", AyuPremiumService.keywordReply, { value in
+                    AyuPremiumService.keywordReply = value
+                })
+            case 16:
+                promptText("Эмодзи для авто-реакции (одна реакция, например 👍 ❤️ 🔥)", AyuPremiumService.reactEmoji, { value in
+                    AyuPremiumService.reactEmoji = value
+                })
             case 20:
                 gfpramOpenSupport(context: context)
+            case 40:
+                pushImpl?(gfpramIconsController(context: context))
             default:
                 break
             }
@@ -194,8 +260,15 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
     let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get())
     |> deliverOnMainQueue
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("GFPGRAM Premium"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramPremiumEntries(), style: .blocks, animateChanges: false)
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        let headerText: String
+        if AyuPremium.isActive {
+            headerText = "Подписка активна " + AyuPremium.statusText + ". Все функции и 4 эксклюзивные иконки доступны."
+        } else {
+            headerText = "Эксклюзивные функции клиента GFPGRAM: автоответы, копии сообщений, спам-режим, бэкап аккаунта и 4 эксклюзивные иконки приложения."
+        }
+        let header = GfpramPremiumHeaderItem(theme: presentationData.theme, title: "GFPGRAM Premium", text: headerText, icon: .carousel(gfpramPremiumIconKeys), locked: !AyuPremium.isActive)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramPremiumEntries(), style: .blocks, headerItem: header, animateChanges: false)
         return (controllerState, (listState, arguments))
     }
 

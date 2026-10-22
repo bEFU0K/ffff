@@ -18,6 +18,7 @@ public enum AyuForward {
             return messages
         }
         var result: [(Bool, EnqueueMessage)] = []
+        var groupKeys: [Int64: Int64] = [:]
         for (flag, message) in messages {
             if case let .forward(source, threadId, _, _, correlationId) = message,
                let sourceMessage = transaction.getMessage(source),
@@ -36,7 +37,18 @@ public enum AyuForward {
                     mediaReference = .standalone(media: media)
                     break
                 }
-                result.append((flag, .message(text: sourceMessage.text, attributes: attributes, inlineStickers: [:], mediaReference: mediaReference, threadId: threadId, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: correlationId, bubbleUpEmojiOrStickersets: [])))
+                // Альбом остаётся альбомом: сообщения одной группы получают общий новый ключ
+                var localGroupingKey: Int64?
+                if let sourceGroup = sourceMessage.groupingKey, mediaReference != nil {
+                    if let existing = groupKeys[sourceGroup] {
+                        localGroupingKey = existing
+                    } else {
+                        let created = Int64.random(in: Int64.min ... Int64.max)
+                        groupKeys[sourceGroup] = created
+                        localGroupingKey = created
+                    }
+                }
+                result.append((flag, .message(text: sourceMessage.text, attributes: attributes, inlineStickers: [:], mediaReference: mediaReference, threadId: threadId, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: localGroupingKey, correlationId: correlationId, bubbleUpEmojiOrStickersets: [])))
             } else {
                 result.append((flag, message))
             }

@@ -44,6 +44,7 @@ private final class AyuPremiumStore: @unchecked Sendable {
     var ownId: Int64 = 0
 
     init() {
+        _ = AyuPersist.ready
         self.lastSeen = UserDefaults.standard.double(forKey: "ayu.lastSeen")
     }
 
@@ -58,7 +59,9 @@ private final class AyuPremiumStore: @unchecked Sendable {
         defer { self.lock.unlock() }
         UserDefaults.standard.set(key, forKey: "ayu.premiumKey")
         AyuKeychain.set("premiumKey", data: Data(key.utf8))
+        AyuPersist.schedule()
         self.cachedUntil = nil
+        AyuCloud.scheduleBackup()
     }
 
     func clearKey() {
@@ -66,6 +69,7 @@ private final class AyuPremiumStore: @unchecked Sendable {
         defer { self.lock.unlock() }
         UserDefaults.standard.removeObject(forKey: "ayu.premiumKey")
         AyuKeychain.set("premiumKey", data: Data())
+        AyuPersist.schedule()
         self.cachedUntil = nil
     }
 
@@ -106,6 +110,7 @@ private final class AyuPremiumStore: @unchecked Sendable {
         list.insert(row, at: 0)
         if list.count > 30 { list = Array(list.prefix(30)) }
         UserDefaults.standard.set(list, forKey: "ayu.issued")
+        AyuPersist.schedule()
     }
 }
 
@@ -304,7 +309,7 @@ public enum AyuBackup {
 public enum AyuPremiumService {
     private static let lock = NSLock()
     private static var started = Set<Int64>()
-    private static var lastReply: [Int64: Double] = [:]
+    private static var lastReply: [String: Double] = [:]
     private static let disposables = DisposableSet()
 
     public static let defaultStub = "Меня сейчас нет на связи, отвечу позже."
@@ -317,6 +322,37 @@ public enum AyuPremiumService {
         set { UserDefaults.standard.set(newValue, forKey: "ayu.stubText") }
     }
 
+    public static let defaultDmReply = "Привет! Сейчас не могу ответить, напишу позже."
+
+    /// Текст автоответчика в личных чатах.
+    public static var dmReplyText: String {
+        get {
+            let value = UserDefaults.standard.string(forKey: "ayu.dmReplyText") ?? ""
+            return value.isEmpty ? defaultDmReply : value
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.dmReplyText") }
+    }
+
+    /// Слово-триггер: если оно есть в входящем сообщении, отправляется ответ на слово.
+    public static var keywordTrigger: String {
+        get { return UserDefaults.standard.string(forKey: "ayu.keywordTrigger") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.keywordTrigger") }
+    }
+
+    public static var keywordReply: String {
+        get { return UserDefaults.standard.string(forKey: "ayu.keywordReply") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.keywordReply") }
+    }
+
+    /// Эмодзи для авто-реакции на входящие личные сообщения.
+    public static var reactEmoji: String {
+        get {
+            let value = UserDefaults.standard.string(forKey: "ayu.reactEmoji") ?? ""
+            return value.isEmpty ? "👍" : value
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.reactEmoji") }
+    }
+
     public static func start(account: Account) {
         let id = account.peerId.toInt64()
         lock.lock()
@@ -325,6 +361,9 @@ public enum AyuPremiumService {
         if !inserted { return }
         AyuPremium.ownId = account.peerId.id._internalGetInt64Value()
         snapshot(account: account)
+        // Иконка и Premium возвращаются после обновления: локальные копии + облачная копия в «Избранном»
+        AyuIconKeeper.restore()
+        AyuCloud.attach(account: account)
         let disposable = account.stateManager.notificationMessages.start(next: { batches in
             for item in batches {
                 for message in item.0 {
@@ -371,25 +410,78 @@ public enum AyuPremiumService {
         return false
     }
 
-    private static func handle(account: Account, message: Message) {
-        if !AyuPremium.isActive || !AyuSettings.value("premiumStub") { return }
-        if !message.flags.contains(.Incoming) { return }
-        let namespace = message.id.peerId.namespace
-        if namespace != Namespaces.Peer.CloudGroup && namespace != Namespaces.Peer.CloudChannel { return }
-        if let channel = message.peers[message.id.peerId] as? TelegramChannel, case .broadcast = channel.info { return }
-        if message.author?.id == account.peerId { return }
-        if !isMention(account: account, message: message) { return }
-        let key = message.id.peerId.toInt64()
+    /// Не чаще одного раза за interval секунд для ключа.
+    private static func allow(_ key: String, interval: Double) -> Bool {
         let now = Date().timeIntervalSince1970
         lock.lock()
+        defer { lock.unlock() }
         let last = lastReply[key] ?? 0
-        if now - last < 120 {
-            lock.unlock()
-            return
+        if now - last < interval {
+            return false
         }
         lastReply[key] = now
-        lock.unlock()
-        let text = stubText
-        let _ = TelegramEngine(account: account).messages.enqueueOutgoingMessage(to: message.id.peerId, replyTo: EngineMessageReplySubject(messageId: message.id, quote: nil, innerSubject: nil), content: .text(text)).start()
+        return true
+    }
+
+    private static func send(account: Account, peerId: PeerId, text: String, replyTo: MessageId?) {
+        var reply: EngineMessageReplySubject?
+        if let replyTo = replyTo {
+            reply = EngineMessageReplySubject(messageId: replyTo, quote: nil, innerSubject: nil)
+        }
+        let _ = TelegramEngine(account: account).messages.enqueueOutgoingMessage(to: peerId, replyTo: reply, content: .text(text)).start()
+    }
+
+    private static func handle(account: Account, message: Message) {
+        if !AyuPremium.isActive { return }
+        if !message.flags.contains(.Incoming) { return }
+        if message.author?.id == account.peerId { return }
+        if let author = message.author as? TelegramUser, author.botInfo != nil { return }
+        let peerId = message.id.peerId
+        let namespace = peerId.namespace
+        let isPrivate = namespace == Namespaces.Peer.CloudUser
+        let isGroup = namespace == Namespaces.Peer.CloudGroup || namespace == Namespaces.Peer.CloudChannel
+        if !isPrivate && !isGroup { return }
+        if let channel = message.peers[peerId] as? TelegramChannel, case .broadcast = channel.info { return }
+        let chatKey = String(peerId.toInt64())
+        let chatTitle = message.peers[peerId]?.debugDisplayTitle ?? "чат"
+
+        if isPrivate && peerId != account.peerId && peerId.id._internalGetInt64Value() != 777000 {
+            // Автоответчик в личных чатах: раз в 10 минут на собеседника
+            if AyuSettings.value("premiumDmReply") && allow("dm:" + chatKey, interval: 600) {
+                send(account: account, peerId: peerId, text: dmReplyText, replyTo: nil)
+            }
+            // Копия входящих личных сообщений в «Избранное» (остаётся, даже если собеседник удалит у себя)
+            if AyuSettings.value("premiumMirror") {
+                var body = message.text
+                if body.isEmpty && !message.media.isEmpty {
+                    body = "[медиа]"
+                }
+                if !body.isEmpty {
+                    send(account: account, peerId: account.peerId, text: "💬 " + chatTitle + ":\n" + body, replyTo: nil)
+                }
+            }
+            // Авто-реакция на входящие личные сообщения
+            if AyuSettings.value("premiumReact") {
+                TelegramEngine(account: account).messages.setMessageReactions(ids: [message.id], reactions: [.builtin(reactEmoji)])
+            }
+        }
+
+        // Ответ на слово-триггер (личные чаты и группы): раз в минуту на чат
+        let word = keywordTrigger.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let wordReply = keywordReply
+        if AyuSettings.value("premiumKeyword") && !word.isEmpty && !wordReply.isEmpty && message.text.lowercased().contains(word) && allow("kw:" + chatKey, interval: 60) {
+            send(account: account, peerId: peerId, text: wordReply, replyTo: message.id)
+        }
+
+        if isGroup && isMention(account: account, message: message) {
+            // Журнал упоминаний в «Избранное»
+            if AyuSettings.value("premiumMentions") && !message.text.isEmpty {
+                send(account: account, peerId: account.peerId, text: "🔔 Вас упомянули в «" + chatTitle + "»:\n" + message.text, replyTo: nil)
+            }
+            // Заглушка при упоминании: раз в 2 минуты на группу
+            if AyuSettings.value("premiumStub") && allow("stub:" + chatKey, interval: 120) {
+                send(account: account, peerId: peerId, text: stubText, replyTo: message.id)
+            }
+        }
     }
 }

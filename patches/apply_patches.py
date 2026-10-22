@@ -11,7 +11,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 core = os.path.join(root, "submodules/TelegramCore/Sources")
 app_dir = os.path.join(root, "Telegram/Telegram-iOS")
 APP_NAME = "GFPGRAM"
-CRITICAL = ["branding-name", "branding-icon", "group-fallback", "gfp-menu-enum", "gfp-menu-action", "gfp-menu-item", "gfp-menu-dep", "gfp-ghost-button", "gfp-deleted-chat", "gfp-deleted-bubble", "gfp-badges", "gfp-icons-build", "gfp-icons-list", "bypass-peer"]
+CRITICAL = ["branding-name", "branding-icon", "group-fallback", "gfp-menu-enum", "gfp-menu-action", "gfp-menu-item", "gfp-menu-dep", "gfp-ghost-button", "gfp-deleted-chat", "gfp-deleted-bubble", "gfp-badges", "gfp-icons-build", "gfp-icons-list", "bypass-peer", "gfp-support-item", "gfp-profile-id"]
 hits_by_label = {}
 
 def read(p):
@@ -71,7 +71,8 @@ if "forward-copy" in disabled:
     print("SKIP forward-copy: disabled")
 else:
     shutil.copy(os.path.join(here, "AyuForward.swift"), os.path.join(core, "AyuForward.swift"))
-print("OK   Ayu*.swift added")
+shutil.copy(os.path.join(here, "AyuIconKeeper.swift"), os.path.join(core, "AyuIconKeeper.swift"))
+print("OK   Ayu*.swift added (+AyuIconKeeper)")
 
 # ---------- Режим призрака ----------
 # Прочитано: не отправляем readHistory на сервер (локально чат остаётся прочитанным)
@@ -296,7 +297,9 @@ shutil.copy(os.path.join(here, "GfpramSettingsController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift"))
 shutil.copy(os.path.join(here, "GfpramPremiumController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"))
-print("OK   GfpramSettingsController.swift + GfpramPremiumController.swift added")
+for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift", "GfpramIconImages.swift", "GfpramEditHistory.swift"):
+    shutil.copy(os.path.join(here, _extra), os.path.join(root, "submodules/SettingsUI/Sources/" + _extra))
+print("OK   GfpramSettingsController/PremiumController/PremiumUI/Assets/Icons/IconImages/EditHistory added")
 
 # SettingsUI: зависимость PromptUI (поле ввода кода)
 patch_plain("gfp-menu-dep", os.path.join(root, "submodules/SettingsUI/BUILD"),
@@ -318,9 +321,7 @@ patch("gfp-menu-item",
       r'    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 50, label: .text(AyuSettings.ghostMaster ? "👻" : ""), text: "GFPGRAM", icon: gfpramHashIcon(), action: {\n'
       r'        interaction.openSettings(.gfpram)\n'
       r'    }))\n'
-      r'    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 53, label: .text("@gfpgram_support"), text: "Тех-поддержка", icon: nil, action: {\n'
-      r'        interaction.openSettings(.gfpramSupport)\n'
-      r'    }))\n\1',
+      r'\1',
       base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
 
 # gfpramHashIcon()/gfpramSettingsController живут в модуле SettingsUI — в этих файлах его может не быть в импортах
@@ -333,6 +334,15 @@ for _fn in ("PeerInfoSettingsItems.swift", "PeerInfoScreenSettingsActions.swift"
             write(_p, re.sub(r"^(import Foundation\n)", r"\1import SettingsUI\n", _src, count=1, flags=re.M)
                   if re.search(r"^import Foundation\n", _src, flags=re.M) else "import SettingsUI\n" + _src)
             print(f"OK   gfp-import-settingsui: {os.path.relpath(_p, root)}")
+
+# «Тех-поддержка» — в самом низу Настроек (после «Советы Telegram»)
+patch("gfp-support-item",
+      r"(    items\[\.support\]!\.append\(PeerInfoScreenDisclosureItem\(id: 2, text: presentationData\.strings\.Settings_Tips, icon: PresentationResourcesSettings\.tips, action: \{\n        interaction\.openSettings\(\.tips\)\n    \}\)\)\n)",
+      lambda m: m.group(1)
+      + '    items[.support]!.append(PeerInfoScreenDisclosureItem(id: 3, label: .text(""), text: "Тех-поддержка", icon: gfpramFeatureIcon(101), action: {\n'
+      + '        interaction.openSettings(.gfpramSupport)\n'
+      + '    }))\n',
+      base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
 
 # кнопка 👻 в шапке списка чатов
 patch("gfp-ghost-button",
@@ -430,67 +440,67 @@ else:
         print("MISSING more-accounts: anchor not found")
 
 # Меню сообщения: «Показать оригинал» (история правок), «ID сообщения», «Выдать значок #»
-CTX_MENU = (
-    "\n        if let ayuMessage = messages.first {\n"
-    "            let ayuHistory = AyuEditHistory.history(id: ayuMessage.id)\n"
-    "            if !ayuHistory.isEmpty {\n"
-    "                actions.append(.action(ContextMenuActionItem(text: \"Показать оригинал\", icon: { _ in return nil }, action: { _, f in\n"
-    "                    f(.default)\n"
-    "                    var ayuText = \"\"\n"
-    "                    for (ayuIndex, ayuItem) in ayuHistory.enumerated() {\n"
-    "                        ayuText += (ayuIndex == 0 ? \"Оригинал:\\n\" : \"Версия \\(ayuIndex):\\n\") + ayuItem + \"\\n\\n\"\n"
-    "                    }\n"
-    "                    controllerInteraction.presentController(textAlertController(context: context, title: \"Сообщение изменено\", text: ayuText, actions: [TextAlertAction(type: .defaultAction, title: \"OK\", action: {})]), nil)\n"
-    "                })))\n"
-    "            }\n"
-    "            if AyuSettings.showIds {\n"
-    "                actions.append(.action(ContextMenuActionItem(text: \"ID сообщения: \\(ayuMessage.id.id)\", icon: { _ in return nil }, action: { _, f in\n"
-    "                    f(.default)\n"
-    "                    UIPasteboard.general.string = \"\\(ayuMessage.id.id)\"\n"
-    "                })))\n"
-    "            }\n"
-    "            if AyuSettings.adminUnlocked {\n"
-    "                var ayuTargetId = ayuMessage.author?.id ?? ayuMessage.id.peerId\n"
-    "                if let ayuChannel = ayuMessage.peers[ayuMessage.id.peerId] as? TelegramChannel, case .broadcast = ayuChannel.info {\n"
-    "                    ayuTargetId = ayuChannel.id\n"
-    "                }\n"
-    "                let ayuTarget = ayuTargetId.id._internalGetInt64Value()\n"
-    "                let ayuHas = AyuBadges.contains(ayuTarget)\n"
-    "                let ayuTitle = ayuMessage.peers[ayuTargetId]?.debugDisplayTitle ?? \"ID \\(ayuTarget)\"\n"
-    "                actions.append(.action(ContextMenuActionItem(text: ayuHas ? \"Убрать значок #\" : \"Выдать значок #\", icon: { _ in return nil }, action: { _, f in\n"
-    "                    f(.default)\n"
-    "                    if ayuHas {\n"
-    "                        AyuBadges.remove(id: ayuTarget)\n"
-    "                    } else {\n"
-    "                        AyuBadges.add(id: ayuTarget, name: ayuTitle)\n"
-    "                    }\n"
-    "                })))\n"
-    "            }\n"
-    "        }\n"
-)
+CTX_MENU = r"""
+        if let ayuMessage = messages.first {
+            let ayuHistory = AyuEditHistory.history(id: ayuMessage.id)
+            if !ayuHistory.isEmpty {
+                actions.append(.action(ContextMenuActionItem(text: "Показать оригинал", icon: { _ in return nil }, action: { _, f in
+                    f(.default)
+                    var ayuEditDate: Int32? = nil
+                    for ayuAttribute in ayuMessage.attributes {
+                        if let ayuEdited = ayuAttribute as? EditedMessageAttribute {
+                            ayuEditDate = ayuEdited.date
+                        }
+                    }
+                    let ayuController = gfpramEditHistoryController(context: context, messageText: ayuMessage.text, editDate: ayuEditDate, entries: AyuEditHistory.entries(id: ayuMessage.id))
+                    controllerInteraction.navigationController()?.pushViewController(ayuController)
+                })))
+            }
+            if AyuSettings.showIds {
+                actions.append(.action(ContextMenuActionItem(text: "ID сообщения: \(ayuMessage.id.id)", icon: { _ in return nil }, action: { _, f in
+                    f(.default)
+                    UIPasteboard.general.string = "\(ayuMessage.id.id)"
+                })))
+            }
+            if AyuSettings.adminUnlocked {
+                var ayuTargetId = ayuMessage.author?.id ?? ayuMessage.id.peerId
+                if let ayuChannel = ayuMessage.peers[ayuMessage.id.peerId] as? TelegramChannel, case .broadcast = ayuChannel.info {
+                    ayuTargetId = ayuChannel.id
+                }
+                let ayuTarget = ayuTargetId.id._internalGetInt64Value()
+                let ayuHas = AyuBadges.contains(ayuTarget)
+                let ayuTitle = ayuMessage.peers[ayuTargetId]?.debugDisplayTitle ?? "ID \(ayuTarget)"
+                actions.append(.action(ContextMenuActionItem(text: ayuHas ? "Убрать значок #" : "Выдать значок #", icon: { _ in return nil }, action: { _, f in
+                    f(.default)
+                    if ayuHas {
+                        AyuBadges.remove(id: ayuTarget)
+                    } else {
+                        AyuBadges.add(id: ayuTarget, name: ayuTitle)
+                    }
+                })))
+            }
+        }
+"""
 patch("gfp-context-menu",
       r"(        let isPremium = accountPeer\?\.isPremium \?\? false\n\n        var actions: \[ContextMenuItem\] = \[\]\n)",
       lambda m: m.group(1) + CTX_MENU,
       base=TUI, filename="ChatInterfaceStateContextMenus.swift")
 
-# ID и страна под аккаунтом в Настройках (перед строкой GFPGRAM)
-ACC_ROWS = (
-    "    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 51, label: .text(String(context.account.peerId.id._internalGetInt64Value())), text: \"ID\", icon: nil, action: {\n"
-    "        UIPasteboard.general.string = String(context.account.peerId.id._internalGetInt64Value())\n"
-    "    }))\n"
-    "    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 52, label: .text(AyuProfile.country(phone: ((data as PeerInfoScreenData?)?.peer as? TelegramUser)?.phone) ?? \"не определена\"), text: \"Страна номера\", icon: nil, action: {\n"
-    "    }))\n"
-    "    items[.advanced]!.append(PeerInfoScreenDisclosureItem(id: 54, label: .text((((data as PeerInfoScreenData?)?.peer as? TelegramUser)?.username).map { \"@\" + $0 } ?? \"не задан\"), text: \"Юзер\", icon: nil, action: {\n"
-    "        if let ayuName = (((data as PeerInfoScreenData?)?.peer as? TelegramUser)?.username) { UIPasteboard.general.string = \"@\" + ayuName }\n"
-    "    }))\n"
-)
-patch("gfp-account-info",
-      r"(    items\[\.advanced\]!\.append\(PeerInfoScreenDisclosureItem\(id: 50, label: \.text\(AyuSettings\.ghostMaster)",
-      lambda m: ACC_ROWS + m.group(1),
-      base=PEER_INFO, filename="PeerInfoSettingsItems.swift")
+# окно «История изменений» живёт в SettingsUI: подключаем модуль в файле контекстного меню
+if "gfp-context-menu" not in disabled:
+    for _p in walk(TUI):
+        if os.path.basename(_p) != "ChatInterfaceStateContextMenus.swift":
+            continue
+        _src = read(_p)
+        if "gfpramEditHistoryController" in _src and not re.search(r"^import SettingsUI\s*$", _src, flags=re.M):
+            write(_p, "import SettingsUI\n" + _src)
+            print(f"OK   gfp-import-settingsui: {os.path.relpath(_p, root)}")
 
 # сменные иконки: основная (заменяется выше), красная, чёрная, аниме, океан, Губка Боб. Остальные стандартные убираем.
-GFP_ICONS = [("GfpRed", "red.jpg"), ("GfpBlack", "black.jpg"), ("GfpAnime", "anime.jpg"), ("GfpOcean", "ocean.jpg"), ("GfpSponge", "sponge.jpg")]
+GFP_FREE_ICONS = [("GfpRed", "red.jpg"), ("GfpBlack", "black.jpg"), ("GfpAnime", "anime.jpg"), ("GfpOcean", "ocean.jpg"), ("GfpSponge", "sponge.jpg")]
+# Premium-иконки: попадают в сборку (BUILD), но в стандартный список Telegram не выводятся, их показывает окно GFPGRAM с замком
+GFP_PREMIUM_ICONS = [("GfpGold", "gold.jpg"), ("GfpTurbo", "turbo.jpg"), ("GfpNight", "night.jpg"), ("GfpDuck", "duck.jpg")]
+GFP_ICONS = GFP_FREE_ICONS + GFP_PREMIUM_ICONS
 try:
     from PIL import Image as _Image
     sizes = {"{n}@2x.png": 120, "{n}@3x.png": 180, "{n}Ipad.png": 76, "{n}Ipad@2x.png": 152, "{n}LargeIpad@2x.png": 167,
@@ -542,7 +552,7 @@ else:
         src = read(pth)
         def _swift_list(m):
             keep = _keep_primary(m.group(2))
-            mine = ['        PresentationAppIcon(name: "%s", imageName: "%s"),' % (x, x) for x, _ in GFP_ICONS]
+            mine = ['        PresentationAppIcon(name: "%s", imageName: "%s"),' % (x, x) for x, _ in GFP_FREE_ICONS]
             return m.group(1) + "\n" + "\n".join(keep + mine) + "\n" + m.group(3)
         new, c = re.subn(r"(var icons = \[)(.*?)(\n\s*\])", _swift_list, src, count=1, flags=re.S)
         if c:
@@ -552,32 +562,158 @@ else:
     if n == 0:
         print("MISSING gfp-icons-list")
 
-# Плашка «# Официальный аккаунт клиента GFPGRAM» в профиле (у аккаунтов со значком «#» и у @gfpgram_support)
-if "gfp-verified" in disabled:
-    print("SKIP gfp-verified: disabled")
-else:
-    n = 0
-    for pth in walk(os.path.join(root, "submodules/TelegramUI")):
-        if os.path.basename(pth) != "PeerInfoScreen.swift":
-            continue
-        src = read(pth)
-        new_src, c = re.subn(r"^(\s*)(if let user = data\.peer as\? TelegramUser \{)\s*$",
-                             r"\1\2\n\1    if let ayuVerified = AyuVerified.text(id: user.id.id._internalGetInt64Value(), username: user.username) {\n"
-                             r'\1        items[.peerInfo, default: []].append(PeerInfoScreenLabeledValueItem(id: 9002, label: "#", text: ayuVerified, textColor: .primary, action: nil, longTapAction: nil, requestLayout: { _ in }))\n'
-                             r"\1    }",
-                             src, count=1, flags=re.M)
-        if c:
-            write(pth, new_src); n += c
-            print(f"OK   gfp-verified: {c} in {os.path.relpath(pth, root)}")
-    hits_by_label["gfp-verified"] = n
-    if n == 0:
-        print("MISSING gfp-verified: anchor not found")
+# Профиль: плашка «# — официальный аккаунт клиента» + «ID» и «страна номера» под именем пользователя
+PROFILE_ITEMS = (
+    '        if let ayuVerified = AyuVerified.text(id: user.id.id._internalGetInt64Value(), username: user.username) {\n'
+    '            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3102, label: "#", text: ayuVerified, textColor: .primary, action: nil, requestLayout: { _ in }))\n'
+    '        }\n'
+    '        items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3100, label: "ID", text: String(user.id.id._internalGetInt64Value()), textColor: .primary, action: { _, _ in\n'
+    '            UIPasteboard.general.string = String(user.id.id._internalGetInt64Value())\n'
+    '        }, requestLayout: { _ in }))\n'
+    '        if let ayuCountry = AyuProfile.country(phone: user.phone) {\n'
+    '            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3101, label: "страна номера", text: ayuCountry, textColor: .primary, action: nil, requestLayout: { _ in }))\n'
+    '        }\n'
+)
+patch("gfp-profile-id",
+      r"(\n)(        if let cachedData = data\.cachedData as\? CachedUserData \{\n            if let birthday = cachedData\.birthday \{)",
+      lambda m: m.group(1) + PROFILE_ITEMS + "\n" + m.group(2),
+      base=PEER_INFO, filename="PeerInfoProfileItems.swift")
 
 # Фоновые функции Premium (заглушка при упоминании, бэкап): запускаются при открытии списка чатов
 patch("gfp-premium-start",
       r"(    override public func loadDisplayNode\(\) \{\n)",
       r"\1        AyuPremiumService.start(account: self.context.account)\n",
       base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListController.swift")
+
+# ======================= Облачная копия Premium/иконки и массовое добавление подарков =======================
+# Оба блока зависят от внутреннего API Telegram-iOS, который меняется. Поэтому перед копированием настоящих файлов
+# проверяем, что нужные типы и методы есть в чекауте; если нет — ставим заглушку (сборка не падает), причина идёт в лог.
+def _all_core_sources():
+    for p in walk(os.path.join(root, "submodules/TelegramCore")):
+        try:
+            yield p, read(p)
+        except Exception:
+            continue
+
+def _balanced_params(src, name):
+    """Находит func name(...) и возвращает (список параметров, хвост после ')'), по всем совпадениям."""
+    for m in re.finditer(r"func\s+" + name + r"\(", src):
+        i, d = m.end(), 1
+        while i < len(src) and d:
+            d += (src[i] == "(") - (src[i] == ")")
+            i += 1
+        params = src[m.end():i - 1]
+        tail = src[i:i + 200]
+        yield _split_top(params), tail
+
+def _split_top(s):
+    parts, d, cur = [], 0, ""
+    for ch in s:
+        if ch in "([<": d += 1
+        elif ch in ")]>": d -= 1
+        if ch == "," and d == 0:
+            parts.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+    if cur.strip(): parts.append(cur.strip())
+    return parts
+
+def check_cloud():
+    """Возвращает (Swift-выражение для location, причина провала)."""
+    loc_case, fn_ok, res_ok = None, False, False
+    for p, src in _all_core_sources():
+        if loc_case is None:
+            m = re.search(r"enum\s+SearchMessagesLocation\b[^{]*\{(.*?)^\}", src, re.S | re.M)
+            if m:
+                c = re.search(r"^\s*case\s+peer\((.*)\)\s*$", m.group(1), re.M)
+                if c:
+                    loc_case = c.group(1)
+        if not fn_ok and "TelegramEngine" in p:
+            for params, tail in _balanced_params(src, "searchMessages"):
+                labels = [x.split(":")[0].strip() for x in params]
+                if all(l in labels for l in ("location", "query", "state")) and all(("=" in x) or x.split(":")[0].strip() in ("location", "query", "state") for x in params) and "SearchMessagesResult" in tail:
+                    fn_ok = True
+                    break
+        if not res_ok and re.search(r"struct\s+SearchMessagesResult\b", src) and re.search(r"(let|var)\s+messages:\s*\[Message\]", src):
+            res_ok = True
+    if loc_case is None:
+        return None, "не найден SearchMessagesLocation.case peer(...)"
+    if not fn_ok:
+        return None, "не найден TelegramEngine.Messages.searchMessages(location:query:state:) -> Signal<(SearchMessagesResult, ...)>"
+    if not res_ok:
+        return None, "у SearchMessagesResult нет messages: [Message]"
+    args = []
+    for item in _split_top(loc_case):
+        label, typ = [x.strip() for x in item.split(":", 1)]
+        if label == "peerId":
+            args.append("peerId: account.peerId")
+        elif typ.endswith("?"):
+            args.append(f"{label}: nil")
+        else:
+            return None, f"не знаю значение для параметра {item} в SearchMessagesLocation.peer"
+    return ".peer(" + ", ".join(args) + ")", None
+
+if "gfp-cloud" in disabled:
+    print("SKIP gfp-cloud: disabled (ставлю заглушку)")
+    shutil.copy(os.path.join(here, "AyuCloudStub.swift"), os.path.join(core, "AyuCloud.swift"))
+else:
+    _loc, _why = check_cloud()
+    if _loc:
+        _tpl = read(os.path.join(here, "AyuCloud.swift")).replace("__LOCATION__", _loc)
+        write(os.path.join(core, "AyuCloud.swift"), _tpl)
+        print(f"OK   gfp-cloud: облачная копия в Избранном, location = {_loc}")
+    else:
+        shutil.copy(os.path.join(here, "AyuCloudStub.swift"), os.path.join(core, "AyuCloud.swift"))
+        print(f"::warning::gfp-cloud: облачная копия Premium отключена (заглушка): {_why}. Локальные копии работают.")
+
+def check_gifts():
+    """Проверяет API профильных подарков и папок. Возвращает список причин провала (пусто = всё ок)."""
+    ctx_src = col_src = ""
+    all_src = ""
+    for p, src in _all_core_sources():
+        all_src += src
+        if re.search(r"class\s+ProfileGiftsContext\b", src) and not ctx_src:
+            ctx_src = src
+        if re.search(r"class\s+ProfileGiftsCollectionsContext\b", src) and not col_src:
+            col_src = src
+    why = []
+    if not ctx_src:
+        why.append("нет класса ProfileGiftsContext")
+    else:
+        ok_init = False
+        for m in re.finditer(r"init\(\s*account:\s*Account,\s*peerId:\s*(?:EnginePeer\.Id|PeerId)((?:[^()]|\([^()]*\))*)\)", ctx_src):
+            rest = _split_top(m.group(1).lstrip(", \n"))
+            if all("=" in x for x in rest if x):
+                ok_init = True
+        if not ok_init: why.append("ProfileGiftsContext.init(account:peerId:...) не совпал")
+        if not re.search(r"var\s+state:\s*Signal<(?:ProfileGiftsContext\.)?State,\s*NoError>", ctx_src): why.append("ProfileGiftsContext.state не Signal<State, NoError>")
+        if not re.search(r"func\s+loadMore\(", ctx_src): why.append("нет ProfileGiftsContext.loadMore()")
+        if not re.search(r"(let|var)\s+gifts:\s*\[StarGift\]", ctx_src): why.append("нет State.gifts: [StarGift]")
+        if not re.search(r"(let|var)\s+fromPeer:\s*EnginePeer\?", ctx_src): why.append("нет StarGift.fromPeer: EnginePeer?")
+        if not re.search(r"case\s+ready\(canLoadMore:\s*Bool,\s*nextOffset:", ctx_src): why.append("DataState.ready(canLoadMore:nextOffset:) другой формы")
+    if not col_src:
+        why.append("нет класса ProfileGiftsCollectionsContext")
+    else:
+        if not re.search(r"init\(\s*account:\s*Account,\s*peerId:\s*(?:EnginePeer\.Id|PeerId)\s*\)", col_src): why.append("ProfileGiftsCollectionsContext.init(account:peerId:) не совпал")
+        if not re.search(r"var\s+state:\s*Signal<(?:ProfileGiftsCollectionsContext\.)?State,\s*NoError>", col_src): why.append("ProfileGiftsCollectionsContext.state не Signal<State, NoError>")
+        if not re.search(r"(let|var)\s+collections:\s*\[StarGiftCollection\]", col_src): why.append("нет State.collections: [StarGiftCollection]")
+        if not re.search(r"func\s+addGifts\(\s*collectionId:\s*Int32,\s*gifts:\s*\[ProfileGiftsContext\.State\.StarGift\]\s*\)\s*->\s*Signal", col_src): why.append("нет addGifts(collectionId: Int32, gifts: [ProfileGiftsContext.State.StarGift]) -> Signal")
+    if not re.search(r"struct\s+StarGiftCollection\b", all_src) or not re.search(r"struct\s+StarGiftCollection\b.*?(let|var)\s+id:\s*Int32.*?(let|var)\s+title:\s*String", all_src, re.S):
+        why.append("у StarGiftCollection нет id: Int32 / title: String")
+    return why
+
+_gift_target = os.path.join(root, "submodules/SettingsUI/Sources/GfpramGifts.swift")
+if "gfp-gifts" in disabled:
+    print("SKIP gfp-gifts: disabled (ставлю заглушку)")
+    shutil.copy(os.path.join(here, "GfpramGiftsStub.swift"), _gift_target)
+else:
+    _gwhy = check_gifts()
+    if not _gwhy:
+        shutil.copy(os.path.join(here, "GfpramGifts.swift"), _gift_target)
+        print("OK   gfp-gifts: массовое добавление подарков в папку")
+    else:
+        shutil.copy(os.path.join(here, "GfpramGiftsStub.swift"), _gift_target)
+        print("::warning::gfp-gifts: массовое добавление подарков отключено (заглушка): " + "; ".join(_gwhy))
 
 # ---------- Автоподстройка под актуальный API Telegram-iOS ----------
 # API Telegram меняется (EngineOutgoingMessageContent.text получил доп. аргументы и т.п.).
@@ -628,7 +764,7 @@ def adapt_text_content():
             d = _default_for(item)
             if d is None: print(f"::error::не знаю значение по умолчанию для {item} в case text({case_line})"); sys.exit(1)
             extra.append(d)
-    targets = [os.path.join(core, "AyuPremium.swift"),
+    targets = [os.path.join(core, "AyuPremium.swift"), os.path.join(core, "AyuCloud.swift"),
                os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"),
                os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift")]
     for t in targets:
@@ -654,7 +790,7 @@ adapt_text_content()
 
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]
-for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "edit-history", "hide-ads", "ghost-consume", "keep-selfdestruct", "forward-copy", "more-accounts", "gfp-context-menu", "gfp-account-info", "gfp-premium-start", "gfp-verified"):
+for l in ("ghost-read", "ghost-typing", "ghost-online", "ghost-stories", "keep-deleted", "edit-history", "hide-ads", "ghost-consume", "keep-selfdestruct", "forward-copy", "more-accounts", "gfp-context-menu", "gfp-premium-start"):
     if l not in disabled and hits_by_label.get(l, 0) == 0:
         print(f"::warning::патч {l} не применился (якорь не найден) — функция работать не будет")
 if bad:

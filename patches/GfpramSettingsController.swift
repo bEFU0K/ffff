@@ -24,6 +24,8 @@ enum GfpramEntry: ItemListNodeEntry {
     case header(Int32, String)
     case toggle(Int32, String, String, Bool)
     case action(Int32, String, String, Int32)
+    case iconAction(Int32, String, String, Int32, Int32)
+    case feature(Int32, String, String, Int32, Int32, Int32)
     case footer(Int32, String)
 
     var entryId: Int32 {
@@ -33,6 +35,10 @@ enum GfpramEntry: ItemListNodeEntry {
         case let .toggle(entryId, _, _, _):
             return entryId
         case let .action(entryId, _, _, _):
+            return entryId
+        case let .iconAction(entryId, _, _, _, _):
+            return entryId
+        case let .feature(entryId, _, _, _, _, _):
             return entryId
         case let .footer(entryId, _):
             return entryId
@@ -64,6 +70,14 @@ enum GfpramEntry: ItemListNodeEntry {
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: nil, title: title, label: label, labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {
                 arguments.perform(kind)
             })
+        case let .iconAction(_, title, label, kind, icon):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: gfpramFeatureIcon(icon), title: title, label: label, labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {
+                arguments.perform(kind)
+            })
+        case let .feature(_, title, text, kind, icon, mode):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: gfpramFeatureIcon(icon), title: title, titleBadge: mode == 2 ? "ВКЛ" : nil, label: text, labelStyle: .multilineDetailText, sectionId: self.section, style: .blocks, disclosureStyle: mode == 0 ? ItemListDisclosureStyle.arrow : ItemListDisclosureStyle.none, action: {
+                arguments.perform(kind)
+            })
         case let .footer(_, text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
@@ -80,8 +94,8 @@ private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?,
     }
     entries.append(.footer(4, "Нажмите на ID или юзернейм, чтобы скопировать. Страна определяется по коду номера телефона."))
     entries.append(.header(5, "PREMIUM"))
-    entries.append(.action(6, "GFPGRAM Premium", AyuPremium.statusText, 3))
-    entries.append(.action(7, "Тех-поддержка", "@" + AyuPremium.supportUsername, 4))
+    entries.append(.iconAction(6, "GFPGRAM Premium", AyuPremium.statusText, 3, 100))
+    entries.append(.iconAction(7, "Тех-поддержка", "@" + AyuPremium.supportUsername, 4, 101))
     var base: Int32 = 100
     for group in AyuSettings.groups {
         entries.append(.header(base, group.title))
@@ -97,6 +111,7 @@ private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?,
     }
     entries.append(.header(base, "ПРИЛОЖЕНИЕ"))
     entries.append(.action(base + 1, "Иконка приложения", "", 0))
+    entries.append(.action(base + 5, "Подарки: добавить все в папку", "", 5))
     entries.append(.action(base + 2, "О GFPGRAM", AyuSettings.version, 1))
     if adminUnlocked {
         entries.append(.action(base + 3, "Админ-панель", "", 2))
@@ -117,7 +132,9 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
         perform: { kind in
             switch kind {
             case 0:
-                pushImpl?(themeSettingsController(context: context))
+                pushImpl?(gfpramIconsController(context: context))
+            case 5:
+                pushImpl?(gfpramGiftsController(context: context))
             case 1:
                 presentImpl?(promptController(context: context, text: "Введите ключ", value: nil, placeholder: "", apply: { value in
                     guard let value = value else {

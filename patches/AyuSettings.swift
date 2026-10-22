@@ -1,81 +1,292 @@
 import Foundation
 import Postbox
 
+/// Запись истории правок: текст версии и время, когда её заменила следующая.
+public struct AyuEditEntry: Codable {
+    public var text: String
+    public var date: Double
+
+    public init(text: String, date: Double) {
+        self.text = text
+        self.date = date
+    }
+}
+
+private struct AyuPersisted: Codable {
+    var deleted: [String] = []
+    var edits: [String: [AyuEditEntry]] = [:]
+    var badges: [String: String] = [:]
+}
+
 /// Хранилище GFPGRAM: настройки, id удалённых сообщений, история правок, локальные значки «#».
+/// Данные пишутся в три места сразу: UserDefaults, файл в Application Support и связку ключей iOS.
+/// При запуске всё сливается обратно, поэтому история не теряется после обновления клиента
+/// (а связка ключей переживает даже удаление приложения, если не менялся Apple ID при переподписи).
 private final class AyuStore: @unchecked Sendable {
     static let shared = AyuStore()
 
     private let lock = NSLock()
-    private var deleted: Set<String>
-    private var edits: [String: [String]]
-    private var badgeNames: [String: String]
+    private var data = AyuPersisted()
+    private var deletedSet = Set<String>()
+    private var saveScheduled = false
+    private let saveQueue = DispatchQueue(label: "gfpgram.store.save", qos: .utility)
+
+    private static let defaultsKey = "ayu.store.v2"
+    private static let keychainKey = "storeV2"
+
+    private static var fileURL: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let dir = base.appendingPathComponent("gfp-data", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        return dir.appendingPathComponent("store.json")
+    }
+
+    private static func merge(_ target: inout AyuPersisted, with other: AyuPersisted) {
+        let known = Set(target.deleted)
+        for id in other.deleted where !known.contains(id) {
+            target.deleted.append(id)
+        }
+        for (key, name) in other.badges where target.badges[key] == nil {
+            target.badges[key] = name
+        }
+        for (key, list) in other.edits {
+            if let current = target.edits[key] {
+                if list.count > current.count {
+                    target.edits[key] = list
+                }
+            } else {
+                target.edits[key] = list
+            }
+        }
+    }
 
     init() {
+        _ = AyuPersist.ready
+        var merged = AyuPersisted()
         let defaults = UserDefaults.standard
-        self.deleted = Set(defaults.stringArray(forKey: "ayu.deletedIds") ?? [])
-        self.edits = (defaults.dictionary(forKey: "ayu.editHistory") as? [String: [String]]) ?? [:]
-        self.badgeNames = (defaults.dictionary(forKey: "ayu.badges") as? [String: String]) ?? [:]
+
+        if let blob = defaults.data(forKey: AyuStore.defaultsKey), let value = try? JSONDecoder().decode(AyuPersisted.self, from: blob) {
+            AyuStore.merge(&merged, with: value)
+        }
+        // Файл в Application Support
+        if let url = AyuStore.fileURL, let blob = try? Data(contentsOf: url), let value = try? JSONDecoder().decode(AyuPersisted.self, from: blob) {
+            AyuStore.merge(&merged, with: value)
+        }
+        // Связка ключей (переживает удаление приложения)
+        if let blob = AyuKeychain.get(AyuStore.keychainKey), let value = try? JSONDecoder().decode(AyuPersisted.self, from: blob) {
+            AyuStore.merge(&merged, with: value)
+        }
+        // Старый формат (до 1.3): отдельные ключи UserDefaults
+        var legacy = AyuPersisted()
+        legacy.deleted = defaults.stringArray(forKey: "ayu.deletedIds") ?? []
+        legacy.badges = (defaults.dictionary(forKey: "ayu.badges") as? [String: String]) ?? [:]
+        if let old = defaults.dictionary(forKey: "ayu.editHistory") as? [String: [String]] {
+            for (key, texts) in old {
+                legacy.edits[key] = texts.map { AyuEditEntry(text: $0, date: 0) }
+            }
+        }
+        AyuStore.merge(&merged, with: legacy)
+
+        self.data = merged
+        self.deletedSet = Set(merged.deleted)
+        self.scheduleSave()
     }
+
+    // MARK: Сохранение
+
+    private func scheduleSave() {
+        self.lock.lock()
+        if self.saveScheduled {
+            self.lock.unlock()
+            return
+        }
+        self.saveScheduled = true
+        self.lock.unlock()
+        self.saveQueue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.writeAll()
+        }
+    }
+
+    private func writeAll() {
+        self.lock.lock()
+        self.saveScheduled = false
+        var snapshot = self.data
+        snapshot.deleted = Array(self.deletedSet)
+        self.lock.unlock()
+
+        guard let blob = try? JSONEncoder().encode(snapshot) else {
+            return
+        }
+        UserDefaults.standard.set(blob, forKey: AyuStore.defaultsKey)
+        if let url = AyuStore.fileURL {
+            try? blob.write(to: url, options: [.atomic])
+        }
+        // В связку ключей кладём ужатую копию: самые свежие правки и последние удалённые.
+        var compact = snapshot
+        let newest = compact.edits.keys.sorted(by: { (compact.edits[$0]?.last?.date ?? 0) > (compact.edits[$1]?.last?.date ?? 0) }).prefix(250)
+        var trimmed: [String: [AyuEditEntry]] = [:]
+        for key in newest {
+            trimmed[key] = compact.edits[key]?.map { AyuEditEntry(text: String($0.text.prefix(2000)), date: $0.date) }
+        }
+        compact.edits = trimmed
+        compact.deleted = Array(compact.deleted.suffix(3000))
+        if let small = try? JSONEncoder().encode(compact) {
+            AyuKeychain.set(AyuStore.keychainKey, data: small)
+        }
+    }
+
+    // MARK: Удалённые
 
     func markDeleted(_ key: String) {
         self.lock.lock()
-        defer { self.lock.unlock() }
-        if self.deleted.insert(key).inserted {
-            UserDefaults.standard.set(Array(self.deleted), forKey: "ayu.deletedIds")
+        let inserted = self.deletedSet.insert(key).inserted
+        self.lock.unlock()
+        if inserted {
+            self.scheduleSave()
         }
     }
 
     func isDeleted(_ key: String) -> Bool {
         self.lock.lock()
         defer { self.lock.unlock() }
-        return self.deleted.contains(key)
+        return self.deletedSet.contains(key)
     }
 
     func clearDeleted() {
         self.lock.lock()
-        defer { self.lock.unlock() }
-        self.deleted.removeAll()
-        UserDefaults.standard.removeObject(forKey: "ayu.deletedIds")
+        self.deletedSet.removeAll()
+        self.data.deleted.removeAll()
+        self.lock.unlock()
+        self.scheduleSave()
     }
+
+    // MARK: История правок
 
     func recordEdit(_ key: String, text: String) {
         self.lock.lock()
-        defer { self.lock.unlock() }
-        var list = self.edits[key] ?? []
-        if list.last != text {
-            list.append(text)
+        var list = self.data.edits[key] ?? []
+        if list.last?.text != text {
+            list.append(AyuEditEntry(text: text, date: Date().timeIntervalSince1970))
         }
-        self.edits[key] = list
-        UserDefaults.standard.set(self.edits, forKey: "ayu.editHistory")
+        self.data.edits[key] = list
+        self.lock.unlock()
+        self.scheduleSave()
+    }
+
+    func editEntries(_ key: String) -> [AyuEditEntry] {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.data.edits[key] ?? []
     }
 
     func editHistory(_ key: String) -> [String] {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        return self.edits[key] ?? []
+        return self.editEntries(key).map { $0.text }
     }
+
+    // MARK: Значки
 
     func hasBadge(_ id: String) -> Bool {
         self.lock.lock()
         defer { self.lock.unlock() }
-        return self.badgeNames[id] != nil
+        return self.data.badges[id] != nil
     }
 
     func setBadge(_ id: String, name: String?) {
         self.lock.lock()
-        defer { self.lock.unlock() }
         if let name = name {
-            self.badgeNames[id] = name
+            self.data.badges[id] = name
         } else {
-            self.badgeNames.removeValue(forKey: id)
+            self.data.badges.removeValue(forKey: id)
         }
-        UserDefaults.standard.set(self.badgeNames, forKey: "ayu.badges")
+        self.lock.unlock()
+        self.scheduleSave()
     }
 
     func allBadges() -> [(String, String)] {
         self.lock.lock()
         defer { self.lock.unlock() }
-        return self.badgeNames.map { ($0.key, $0.value) }.sorted(by: { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 < $1.1 })
+        return self.data.badges.map { ($0.key, $0.value) }.sorted(by: { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 < $1.1 })
+    }
+}
+
+/// Резервная копия всех настроек GFPGRAM (ключи UserDefaults с префиксом «ayu.»): Premium-ключ, переключатели,
+/// тексты автоответов, вход в админ-панель и т.д. Копия лежит в файле Application Support и в связке ключей iOS.
+/// При запуске недостающие значения возвращаются, поэтому после обновления клиента Premium и настройки не слетают.
+enum AyuPersist {
+    private static let keychainKey = "prefsV1"
+    private static let lock = NSLock()
+    private static var scheduled = false
+    private static let queue = DispatchQueue(label: "gfpgram.prefs", qos: .utility)
+
+    /// Первое обращение один раз восстанавливает данные и подписывается на уход в фон.
+    static let ready: Bool = {
+        restore()
+        NotificationCenter.default.addObserver(forName: Notification.Name("UIApplicationDidEnterBackgroundNotification"), object: nil, queue: nil, using: { _ in
+            schedule()
+        })
+        schedule()
+        return true
+    }()
+
+    private static var fileURL: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let dir = base.appendingPathComponent("gfp-data", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        return dir.appendingPathComponent("prefs.json")
+    }
+
+    private static func collect() -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, value) in UserDefaults.standard.dictionaryRepresentation() where key.hasPrefix("ayu.") && key != "ayu.store.v2" {
+            if value is Bool || value is String || value is Double || value is Int || value is [String] || value is [[String]] {
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    private static func restore() {
+        var sources: [[String: Any]] = []
+        if let url = fileURL, let data = try? Data(contentsOf: url), let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            sources.append(object)
+        }
+        if let data = AyuKeychain.get(keychainKey), !data.isEmpty, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            sources.append(object)
+        }
+        let defaults = UserDefaults.standard
+        for source in sources {
+            for (key, value) in source where key.hasPrefix("ayu.") && defaults.object(forKey: key) == nil {
+                defaults.set(value, forKey: key)
+            }
+        }
+    }
+
+    /// Отложенная запись копии (не чаще раза в пару секунд).
+    static func schedule() {
+        lock.lock()
+        if scheduled {
+            lock.unlock()
+            return
+        }
+        scheduled = true
+        lock.unlock()
+        queue.asyncAfter(deadline: .now() + 2.0) {
+            lock.lock()
+            scheduled = false
+            lock.unlock()
+            let snapshot = collect()
+            guard JSONSerialization.isValidJSONObject(snapshot), let data = try? JSONSerialization.data(withJSONObject: snapshot) else {
+                return
+            }
+            if let url = fileURL {
+                try? data.write(to: url, options: [.atomic])
+            }
+            AyuKeychain.set(keychainKey, data: data)
+        }
     }
 }
 
@@ -100,7 +311,7 @@ public enum AyuSettings {
         }
     }
 
-    public static let version = "1.2"
+    public static let version = "1.4"
 
     private static let ghostKeys = ["ghostRead", "ghostTyping", "ghostOnline", "ghostStories", "ghostScreenshot", "ghostConsume"]
 
@@ -136,14 +347,16 @@ public enum AyuSettings {
     }
 
     private static func flag(_ key: String) -> Bool {
+        _ = AyuPersist.ready
         if UserDefaults.standard.object(forKey: key) == nil { return true }
         return UserDefaults.standard.bool(forKey: key)
     }
 
     /// Переключатели, которые по умолчанию выключены.
-    private static let defaultOff: Set<String> = ["showIds", "premiumStub"]
+    private static let defaultOff: Set<String> = ["showIds", "premiumStub", "premiumDmReply", "premiumKeyword", "premiumMirror", "premiumReact", "premiumMentions"]
 
     private static func flagKey(_ key: String) -> Bool {
+        _ = AyuPersist.ready
         if UserDefaults.standard.object(forKey: "ayu." + key) == nil { return !defaultOff.contains(key) }
         return UserDefaults.standard.bool(forKey: "ayu." + key)
     }
@@ -162,6 +375,7 @@ public enum AyuSettings {
             return
         }
         UserDefaults.standard.set(value, forKey: "ayu." + key)
+        AyuPersist.schedule()
     }
 
     public static var ghostMaster: Bool {
@@ -177,6 +391,7 @@ public enum AyuSettings {
         for key in self.ghostKeys {
             UserDefaults.standard.set(value, forKey: "ayu." + key)
         }
+        AyuPersist.schedule()
     }
 
     public static var ghostRead: Bool { return flag("ayu.ghostRead") }
@@ -203,12 +418,14 @@ public enum AyuSettings {
     // MARK: - Скрытый вход в админ-панель
 
     public static var adminUnlocked: Bool {
+        _ = AyuPersist.ready
         return UserDefaults.standard.bool(forKey: "ayu.adminUnlocked")
     }
 
     public static func verifyAdminCode(_ code: String) -> Bool {
         if code.trimmingCharacters(in: .whitespacesAndNewlines) == "888090%" {
             UserDefaults.standard.set(true, forKey: "ayu.adminUnlocked")
+            AyuPersist.schedule()
             return true
         }
         return false
@@ -227,6 +444,11 @@ public enum AyuEditHistory {
 
     public static func history(id: MessageId) -> [String] {
         return AyuStore.shared.editHistory(key(id))
+    }
+
+    /// Все прошлые версии с временем замены: [0] — оригинал, дальше по порядку правок.
+    public static func entries(id: MessageId) -> [AyuEditEntry] {
+        return AyuStore.shared.editEntries(key(id))
     }
 }
 
@@ -283,7 +505,7 @@ public enum AyuBadges {
 
 /// Локальная плашка «Официальный аккаунт клиента GFPGRAM» в профиле (как подтверждение у Major, но только на этом устройстве).
 public enum AyuVerified {
-    public static let text = "Официальный аккаунт клиента GFPGRAM"
+    public static let text = "# — официальный аккаунт клиента"
 
     public static func text(id: Int64, username: String?) -> String? {
         if AyuBadges.contains(id) { return text }
