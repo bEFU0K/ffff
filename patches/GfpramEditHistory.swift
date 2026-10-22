@@ -19,9 +19,12 @@ private final class GfpramEditArguments {
 private enum GfpramEditEntry: ItemListNodeEntry {
     case version(Int32, String, String, String?)
     case footer(Int32, String)
+    case hero(Int32, String, String)
 
     var entryId: Int32 {
         switch self {
+        case let .hero(entryId, _, _):
+            return entryId
         case let .version(entryId, _, _, _):
             return entryId
         case let .footer(entryId, _):
@@ -30,6 +33,9 @@ private enum GfpramEditEntry: ItemListNodeEntry {
     }
 
     var section: ItemListSectionId {
+        if self.entryId < 0 {
+            return -1
+        }
         return self.entryId / 1000
     }
 
@@ -44,6 +50,8 @@ private enum GfpramEditEntry: ItemListNodeEntry {
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
         let arguments = arguments as! GfpramEditArguments
         switch self {
+        case let .hero(_, title, text):
+            return GfpramPremiumHeaderItem(theme: presentationData.theme, title: title, text: text, icon: GfpramHeaderIcon.none, locked: false, sectionId: self.section)
         case let .version(_, title, text, badge):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: nil, title: title, titleBadge: badge, label: text, labelStyle: .multilineDetailText, sectionId: self.section, style: .blocks, disclosureStyle: ItemListDisclosureStyle.none, action: {
                 arguments.copy(text)
@@ -98,8 +106,8 @@ public func gfpramEditHistoryController(context: AccountContext, messageText: St
 
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
         let headerText = entries.isEmpty ? "Для этого сообщения сохранённых правок нет." : "Все варианты сообщения: от оригинала до текущего. Правок: \(entries.count)."
-        let header = GfpramPremiumHeaderItem(theme: presentationData.theme, title: "История изменений", text: headerText, icon: GfpramHeaderIcon.none, locked: false)
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: list, style: .blocks, headerItem: header, animateChanges: false)
+        list.insert(.hero(-1, "История изменений", headerText), at: 0)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: list, style: .blocks, animateChanges: false)
         return (controllerState, (listState, arguments))
     }
 

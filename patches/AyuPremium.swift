@@ -157,13 +157,25 @@ public enum AyuPremium {
 
     public static func activate(key: String, ownId: Int64) -> ActivateResult {
         guard let parsed = parse(key: key) else { return .invalid }
-        if parsed.userId != ownId { return .wrongAccount }
+        // Ключ подходит к любому вашему аккаунту, в который вы входили в этом приложении
+        if parsed.userId != ownId && !AyuOwnAccounts.contains(parsed.userId) { return .wrongAccount }
         if Double(parsed.until) <= AyuPremiumStore.shared.now() { return .expired }
         let current = AyuPremiumStore.shared.until() ?? 0
         if Double(parsed.until) > current {
             AyuPremiumStore.shared.saveKey(key.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())
         }
         return .ok(Date(timeIntervalSince1970: Double(parsed.until)))
+    }
+
+    /// Возврат ключа из облачной копии в «Избранном» вашего же аккаунта: подпись проверяется, привязка к id не требуется,
+    /// чтобы Premium возвращался на любом вашем аккаунте.
+    static func restoreKey(_ key: String) {
+        guard let parsed = parse(key: key) else { return }
+        if Double(parsed.until) <= AyuPremiumStore.shared.now() { return }
+        let current = AyuPremiumStore.shared.until() ?? 0
+        if Double(parsed.until) > current {
+            AyuPremiumStore.shared.saveKey(key.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())
+        }
     }
 
     public static func revokeLocal() {
@@ -233,7 +245,8 @@ public enum AyuPremium {
 
     static func isStarVisible(id: Int64) -> Bool {
         let own = AyuPremiumStore.shared.ownId
-        return own != 0 && id == own && isActive && AyuSettings.value("premiumStar")
+        let mine = (own != 0 && id == own) || AyuOwnAccounts.contains(id)
+        return mine && isActive && AyuSettings.value("premiumStar")
     }
 }
 
@@ -312,7 +325,7 @@ public enum AyuPremiumService {
     private static var lastReply: [String: Double] = [:]
     private static let disposables = DisposableSet()
 
-    public static let defaultStub = "Меня сейчас нет на связи, отвечу позже."
+    public static let defaultStub = "{имя}, привет! Сейчас не могу ответить в «{чат}». Увижу ваше сообщение чуть позже и отвечу."
 
     public static var stubText: String {
         get {
@@ -322,7 +335,7 @@ public enum AyuPremiumService {
         set { UserDefaults.standard.set(newValue, forKey: "ayu.stubText") }
     }
 
-    public static let defaultDmReply = "Привет! Сейчас не могу ответить, напишу позже."
+    public static let defaultDmReply = "Привет, {имя}! Сейчас меня нет в сети, но я обязательно увижу сообщение и отвечу, как только появлюсь. Если что-то срочное — опиши суть одним сообщением."
 
     /// Текст автоответчика в личных чатах.
     public static var dmReplyText: String {
@@ -331,6 +344,140 @@ public enum AyuPremiumService {
             return value.isEmpty ? defaultDmReply : value
         }
         set { UserDefaults.standard.set(newValue, forKey: "ayu.dmReplyText") }
+    }
+
+    // MARK: Автоответчик по состоянию (не в сети / в сети / ночью / занят)
+
+    public static let defaultOnlineReply = "Привет, {имя}! Я на связи, но прямо сейчас не могу ответить. Напишу, как только освобожусь."
+    public static let defaultBusyReply = "Привет, {имя}! Сейчас я занят и отвечу позже. Если вопрос срочный — коротко опиши суть, и я отвечу в первую очередь."
+    public static let defaultNightReply = "Привет, {имя}! Сейчас {время} — я отдыхаю и отвечу после {до}. Напиши, что нужно, и я отвечу утром."
+
+    private static func storedText(_ key: String, _ fallback: String) -> String {
+        let value = UserDefaults.standard.string(forKey: key) ?? ""
+        return value.isEmpty ? fallback : value
+    }
+
+    /// Ответ, когда приложение открыто («в сети»).
+    public static var onlineReplyText: String {
+        get { return storedText("ayu.ar.onlineText", defaultOnlineReply) }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.ar.onlineText") }
+    }
+
+    /// Ответ в режиме «Занят» (включается вручную).
+    public static var busyReplyText: String {
+        get { return storedText("ayu.ar.busyText", defaultBusyReply) }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.ar.busyText") }
+    }
+
+    /// Ответ ночью.
+    public static var nightReplyText: String {
+        get { return storedText("ayu.ar.nightText", defaultNightReply) }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.ar.nightText") }
+    }
+
+    /// Ночь с ... часов (0-23).
+    public static var nightStart: Int {
+        get {
+            let v = UserDefaults.standard.object(forKey: "ayu.ar.nightStart") as? Int
+            return min(max(v ?? 23, 0), 23)
+        }
+        set { UserDefaults.standard.set(min(max(newValue, 0), 23), forKey: "ayu.ar.nightStart") }
+    }
+
+    /// Ночь до ... часов (0-23).
+    public static var nightEnd: Int {
+        get {
+            let v = UserDefaults.standard.object(forKey: "ayu.ar.nightEnd") as? Int
+            return min(max(v ?? 8, 0), 23)
+        }
+        set { UserDefaults.standard.set(min(max(newValue, 0), 23), forKey: "ayu.ar.nightEnd") }
+    }
+
+    public static let replyIntervals: [Int] = [1, 5, 10, 30, 60, 240]
+
+    /// Не чаще чем раз в ... минут на собеседника.
+    public static var replyMinutes: Int {
+        get {
+            let v = UserDefaults.standard.object(forKey: "ayu.ar.minutes") as? Int
+            return replyIntervals.contains(v ?? 10) ? (v ?? 10) : 10
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "ayu.ar.minutes") }
+    }
+
+    public static func nextReplyMinutes() {
+        let list = replyIntervals
+        let index = list.firstIndex(of: replyMinutes) ?? 0
+        replyMinutes = list[(index + 1) % list.count]
+    }
+
+    public static func minutesLabel(_ minutes: Int) -> String {
+        if minutes >= 60 { return String(minutes / 60) + " ч" }
+        return String(minutes) + " мин"
+    }
+
+    public static func hourLabel(_ hour: Int) -> String {
+        return (hour < 10 ? "0" : "") + String(hour) + ":00"
+    }
+
+    public static func resetTexts() {
+        for key in ["ayu.stubText", "ayu.dmReplyText", "ayu.ar.onlineText", "ayu.ar.busyText", "ayu.ar.nightText"] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    /// Приложение открыто (экран активен) — это и есть «я в сети».
+    public static var isForeground: Bool = true
+    private static var observing = false
+
+    private static func observeAppState() {
+        lock.lock()
+        let first = !observing
+        observing = true
+        lock.unlock()
+        if !first { return }
+        let center = NotificationCenter.default
+        center.addObserver(forName: Notification.Name("UIApplicationDidBecomeActiveNotification"), object: nil, queue: nil, using: { _ in
+            AyuPremiumService.isForeground = true
+        })
+        center.addObserver(forName: Notification.Name("UIApplicationWillResignActiveNotification"), object: nil, queue: nil, using: { _ in
+            AyuPremiumService.isForeground = false
+        })
+    }
+
+    public static func isNightNow() -> Bool {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let from = nightStart
+        let to = nightEnd
+        if from == to { return false }
+        if from < to { return hour >= from && hour < to }
+        return hour >= from || hour < to
+    }
+
+    /// Подставляет {имя}, {чат}, {время}, {дата}, {до} в текст ответа.
+    public static func fill(_ text: String, name: String, chat: String) -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "ru_RU")
+        dateFormatter.dateFormat = "d MMMM"
+        let now = Date()
+        var result = text
+        result = result.replacingOccurrences(of: "{имя}", with: name)
+        result = result.replacingOccurrences(of: "{чат}", with: chat)
+        result = result.replacingOccurrences(of: "{время}", with: timeFormatter.string(from: now))
+        result = result.replacingOccurrences(of: "{дата}", with: dateFormatter.string(from: now))
+        result = result.replacingOccurrences(of: "{до}", with: hourLabel(nightEnd))
+        return result
+    }
+
+    /// Какой текст отправить автоответчиком сейчас. Приоритет: «Занят» → ночь → «в сети» / «не в сети». nil — не отвечать.
+    public static func autoReplyText() -> String? {
+        if AyuSettings.value("arBusy") { return busyReplyText }
+        if AyuSettings.value("arNight") && isNightNow() { return nightReplyText }
+        if isForeground {
+            return AyuSettings.value("arOnline") ? onlineReplyText : nil
+        }
+        return AyuSettings.value("arOffline") ? dmReplyText : nil
     }
 
     /// Слово-триггер: если оно есть в входящем сообщении, отправляется ответ на слово.
@@ -355,11 +502,18 @@ public enum AyuPremiumService {
 
     public static func start(account: Account) {
         let id = account.peerId.toInt64()
+        let ownInt = account.peerId.id._internalGetInt64Value()
+        // ownId обновляем при каждом переключении аккаунта (раньше обновлялся только при первом запуске аккаунта)
+        AyuPremium.ownId = ownInt
         lock.lock()
         let inserted = started.insert(id).inserted
         lock.unlock()
         if !inserted { return }
-        AyuPremium.ownId = account.peerId.id._internalGetInt64Value()
+        if AyuOwnAccounts.register(ownInt) {
+            AyuBadges.inheritForNewOwn(id: ownInt)
+            AyuCloud.scheduleBackup()
+        }
+        observeAppState()
         snapshot(account: account)
         // Иконка и Premium возвращаются после обновления: локальные копии + облачная копия в «Избранном»
         AyuIconKeeper.restore()
@@ -444,11 +598,15 @@ public enum AyuPremiumService {
         if let channel = message.peers[peerId] as? TelegramChannel, case .broadcast = channel.info { return }
         let chatKey = String(peerId.toInt64())
         let chatTitle = message.peers[peerId]?.debugDisplayTitle ?? "чат"
+        var senderName = "друг"
+        if let author = message.author as? TelegramUser, let first = author.firstName, !first.isEmpty {
+            senderName = first
+        }
 
         if isPrivate && peerId != account.peerId && peerId.id._internalGetInt64Value() != 777000 {
-            // Автоответчик в личных чатах: раз в 10 минут на собеседника
-            if AyuSettings.value("premiumDmReply") && allow("dm:" + chatKey, interval: 600) {
-                send(account: account, peerId: peerId, text: dmReplyText, replyTo: nil)
+            // Автоответчик в личных чатах: текст зависит от состояния (не в сети / в сети / ночью / занят)
+            if AyuSettings.value("premiumDmReply"), let template = autoReplyText(), allow("dm:" + chatKey, interval: Double(replyMinutes * 60)) {
+                send(account: account, peerId: peerId, text: fill(template, name: senderName, chat: chatTitle), replyTo: nil)
             }
             // Копия входящих личных сообщений в «Избранное» (остаётся, даже если собеседник удалит у себя)
             if AyuSettings.value("premiumMirror") {
@@ -462,7 +620,13 @@ public enum AyuPremiumService {
             }
             // Авто-реакция на входящие личные сообщения
             if AyuSettings.value("premiumReact") {
-                TelegramEngine(account: account).messages.setMessageReactions(ids: [message.id], reactions: [.builtin(reactEmoji)])
+                let ayuEngine = TelegramEngine(account: account)
+                let ayuMessageId = message.id
+                let ayuEmoji = reactEmoji
+                // Небольшая пауза: сообщение должно успеть попасть в базу, иначе сервер/клиент реакцию отбросит
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    __AYU_REACT__
+                }
             }
         }
 
@@ -470,7 +634,7 @@ public enum AyuPremiumService {
         let word = keywordTrigger.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let wordReply = keywordReply
         if AyuSettings.value("premiumKeyword") && !word.isEmpty && !wordReply.isEmpty && message.text.lowercased().contains(word) && allow("kw:" + chatKey, interval: 60) {
-            send(account: account, peerId: peerId, text: wordReply, replyTo: message.id)
+            send(account: account, peerId: peerId, text: fill(wordReply, name: senderName, chat: chatTitle), replyTo: message.id)
         }
 
         if isGroup && isMention(account: account, message: message) {
@@ -479,8 +643,9 @@ public enum AyuPremiumService {
                 send(account: account, peerId: account.peerId, text: "🔔 Вас упомянули в «" + chatTitle + "»:\n" + message.text, replyTo: nil)
             }
             // Заглушка при упоминании: раз в 2 минуты на группу
-            if AyuSettings.value("premiumStub") && allow("stub:" + chatKey, interval: 120) {
-                send(account: account, peerId: peerId, text: stubText, replyTo: message.id)
+            let stubAllowed = !AyuSettings.value("arStubOffline") || !isForeground
+            if AyuSettings.value("premiumStub") && stubAllowed && allow("stub:" + chatKey, interval: 120) {
+                send(account: account, peerId: peerId, text: fill(stubText, name: senderName, chat: chatTitle), replyTo: message.id)
             }
         }
     }

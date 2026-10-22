@@ -27,9 +27,12 @@ enum GfpramEntry: ItemListNodeEntry {
     case iconAction(Int32, String, String, Int32, Int32)
     case feature(Int32, String, String, Int32, Int32, Int32)
     case footer(Int32, String)
+    case hero(Int32, String, String)
 
     var entryId: Int32 {
         switch self {
+        case let .hero(entryId, _, _):
+            return entryId
         case let .header(entryId, _):
             return entryId
         case let .toggle(entryId, _, _, _):
@@ -46,6 +49,9 @@ enum GfpramEntry: ItemListNodeEntry {
     }
 
     var section: ItemListSectionId {
+        if self.entryId < 0 {
+            return -1
+        }
         return self.entryId / 100
     }
 
@@ -60,6 +66,8 @@ enum GfpramEntry: ItemListNodeEntry {
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
         let arguments = arguments as! GfpramArguments
         switch self {
+        case let .hero(_, title, text):
+            return GfpramPremiumHeaderItem(theme: presentationData.theme, title: title, text: text, icon: .carousel(gfpramPremiumIconKeys), locked: !AyuPremium.isActive, sectionId: self.section)
         case let .header(_, text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
         case let .toggle(_, title, key, value):
@@ -111,7 +119,7 @@ private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?,
     }
     entries.append(.header(base, "ПРИЛОЖЕНИЕ"))
     entries.append(.action(base + 1, "Иконка приложения", "", 0))
-    entries.append(.action(base + 5, "Подарки: добавить все в папку", "", 5))
+    entries.append(.action(base + 5, "Подарки: добавить все в коллекцию", "", 5))
     entries.append(.action(base + 2, "О GFPGRAM", AyuSettings.version, 1))
     if adminUnlocked {
         entries.append(.action(base + 3, "Админ-панель", "", 2))

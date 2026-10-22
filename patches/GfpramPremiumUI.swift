@@ -4,6 +4,7 @@ import Display
 import AsyncDisplayKit
 import TelegramPresentationData
 import ItemListUI
+import SwiftSignalKit
 
 // MARK: - Значки
 
@@ -90,7 +91,9 @@ public func gfpramFeatureIcon(_ code: Int32) -> UIImage? {
     return image
 }
 
-// MARK: - Шапка окна Premium (как в Telegram Premium)
+// MARK: - Шапка окон (иконка, заголовок, описание)
+// Шапка — обычная строка списка (первая). Раньше это был ItemListControllerHeaderItem: его положение зависит от высоты навигации,
+// из-за чего иконка уезжала под статус-бар, а текст — слишком высоко. Строка списка всегда стоит ровно под навигацией.
 
 /// Что рисовать вверху окна.
 enum GfpramHeaderIcon {
@@ -117,64 +120,63 @@ enum GfpramHeaderIcon {
     }
 }
 
-final class GfpramPremiumHeaderItem: ItemListControllerHeaderItem {
+final class GfpramPremiumHeaderItem: ListViewItem, ItemListItem {
     let theme: PresentationTheme
     let title: String
     let text: String
     let icon: GfpramHeaderIcon
     let locked: Bool
+    let sectionId: ItemListSectionId
 
-    init(theme: PresentationTheme, title: String, text: String, icon: GfpramHeaderIcon? = nil, locked: Bool = false) {
+    init(theme: PresentationTheme, title: String, text: String, icon: GfpramHeaderIcon? = nil, locked: Bool = false, sectionId: ItemListSectionId = 0) {
         self.theme = theme
         self.title = title
         self.text = text
         self.icon = icon ?? .carousel(gfpramPremiumIconKeys)
         self.locked = locked
+        self.sectionId = sectionId
     }
 
-    func isEqual(to: ItemListControllerHeaderItem) -> Bool {
-        if let item = to as? GfpramPremiumHeaderItem {
-            return self.theme === item.theme && self.title == item.title && self.text == item.text && self.icon.identity == item.icon.identity && self.locked == item.locked
-        } else {
-            return false
+    func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, previousItem: ListViewItem?, nextItem: ListViewItem?, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
+        async {
+            let node = GfpramPremiumHeaderItemNode()
+            let (layout, apply) = node.asyncLayout()(self, params)
+            node.contentSize = layout.contentSize
+            node.insets = layout.insets
+            Queue.mainQueue().async {
+                completion(node, {
+                    return (nil, { _ in apply() })
+                })
+            }
         }
     }
 
-    func node(current: ItemListControllerHeaderItemNode?) -> ItemListControllerHeaderItemNode {
-        if let current = current as? GfpramPremiumHeaderItemNode {
-            current.item = self
-            return current
-        } else {
-            return GfpramPremiumHeaderItemNode(item: self)
+    func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, previousItem: ListViewItem?, nextItem: ListViewItem?, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {
+        Queue.mainQueue().async {
+            if let nodeValue = node() as? GfpramPremiumHeaderItemNode {
+                let layoutAndApply = nodeValue.asyncLayout()
+                async {
+                    let (layout, apply) = layoutAndApply(self, params)
+                    Queue.mainQueue().async {
+                        completion(layout, { _ in apply() })
+                    }
+                }
+            }
         }
     }
 }
 
-final class GfpramPremiumHeaderItemNode: ItemListControllerHeaderItemNode {
+final class GfpramPremiumHeaderItemNode: ListViewItemNode {
     private let titleNode = ImmediateTextNode()
     private let textNode = ImmediateTextNode()
     private let imageView = UIImageView()
     private let carouselView = GfpramIconCarouselView(frame: CGRect())
 
-    private var validLayout: ContainerViewLayout?
-    private var titleSize = CGSize()
-    private var textSize = CGSize()
-    private var scrollOffset: CGFloat = 0.0
-    private var iconSide: CGFloat = 116.0
+    private var item: GfpramPremiumHeaderItem?
+    private var iconSide: CGFloat = 0.0
 
-    var item: GfpramPremiumHeaderItem {
-        didSet {
-            self.updateItem()
-            if let layout = self.validLayout {
-                let _ = self.updateLayout(layout: layout, transition: .immediate)
-            }
-        }
-    }
-
-    init(item: GfpramPremiumHeaderItem) {
-        self.item = item
-
-        super.init()
+    init() {
+        super.init(layerBacked: false, dynamicBounce: false)
 
         self.titleNode.isUserInteractionEnabled = false
         self.titleNode.maximumNumberOfLines = 0
@@ -184,8 +186,6 @@ final class GfpramPremiumHeaderItemNode: ItemListControllerHeaderItemNode {
 
         self.addSubnode(self.titleNode)
         self.addSubnode(self.textNode)
-
-        self.updateItem()
     }
 
     override func didLoad() {
@@ -195,66 +195,87 @@ final class GfpramPremiumHeaderItemNode: ItemListControllerHeaderItemNode {
         self.view.addSubview(self.carouselView)
     }
 
-    private func updateItem() {
-        self.titleNode.attributedText = NSAttributedString(string: self.item.title, font: Font.semibold(26.0), textColor: self.item.theme.list.itemPrimaryTextColor, paragraphAlignment: .center)
-        self.textNode.attributedText = NSAttributedString(string: self.item.text, font: Font.regular(15.0), textColor: self.item.theme.list.freeTextColor, paragraphAlignment: .center)
-
-        switch self.item.icon {
-        case let .image(image):
-            self.iconSide = 116.0
-            self.imageView.isHidden = false
-            self.carouselView.isHidden = true
-            self.imageView.image = image ?? gfpramPremiumImage()
-            self.imageView.contentMode = .scaleAspectFit
-            self.imageView.layer.cornerRadius = 0.0
-            self.imageView.clipsToBounds = false
-        case let .tile(image):
-            self.iconSide = 96.0
-            self.imageView.isHidden = false
-            self.carouselView.isHidden = true
-            self.imageView.image = image
-            self.imageView.contentMode = .scaleAspectFill
-            self.imageView.layer.cornerRadius = self.iconSide * 0.23
-            self.imageView.clipsToBounds = true
-        case let .carousel(keys):
-            self.iconSide = 116.0
-            self.imageView.isHidden = true
-            self.carouselView.isHidden = false
-            self.carouselView.configure(keys: keys, locked: self.item.locked)
+    private static func iconSide(for icon: GfpramHeaderIcon) -> CGFloat {
+        switch icon {
+        case .image, .carousel:
+            return 116.0
+        case .tile:
+            return 96.0
         case .none:
-            self.iconSide = 0.0
-            self.imageView.isHidden = true
-            self.carouselView.isHidden = true
+            return 0.0
         }
     }
 
-    private func updateFrames() {
-        guard let layout = self.validLayout else {
-            return
+    private static func measure(_ string: String, font: UIFont, width: CGFloat) -> CGFloat {
+        let rect = (string as NSString).boundingRect(with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+        return ceil(rect.height)
+    }
+
+    func asyncLayout() -> (_ item: GfpramPremiumHeaderItem, _ params: ListViewItemLayoutParams) -> (ListViewItemNodeLayout, () -> Void) {
+        return { item, params in
+            let sideInset: CGFloat = 28.0 + max(params.leftInset, params.rightInset)
+            let textWidth = max(10.0, params.width - sideInset * 2.0)
+            let side = GfpramPremiumHeaderItemNode.iconSide(for: item.icon)
+            let topPadding: CGFloat = 12.0
+            let titleHeight = GfpramPremiumHeaderItemNode.measure(item.title, font: Font.semibold(26.0), width: textWidth)
+            let textHeight = GfpramPremiumHeaderItemNode.measure(item.text, font: Font.regular(15.0), width: textWidth)
+            var height = topPadding
+            if side > 0.0 {
+                height += side + 16.0
+            }
+            height += titleHeight + 10.0 + textHeight + 28.0
+
+            let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets())
+
+            return (layout, { [weak self] in
+                guard let self = self else {
+                    return
+                }
+                self.item = item
+                self.iconSide = side
+
+                self.titleNode.attributedText = NSAttributedString(string: item.title, font: Font.semibold(26.0), textColor: item.theme.list.itemPrimaryTextColor, paragraphAlignment: .center)
+                self.textNode.attributedText = NSAttributedString(string: item.text, font: Font.regular(15.0), textColor: item.theme.list.freeTextColor, paragraphAlignment: .center)
+
+                switch item.icon {
+                case let .image(image):
+                    self.imageView.isHidden = false
+                    self.carouselView.isHidden = true
+                    self.imageView.image = image ?? gfpramPremiumImage()
+                    self.imageView.contentMode = .scaleAspectFit
+                    self.imageView.layer.cornerRadius = 0.0
+                    self.imageView.clipsToBounds = false
+                case let .tile(image):
+                    self.imageView.isHidden = false
+                    self.carouselView.isHidden = true
+                    self.imageView.image = image
+                    self.imageView.contentMode = .scaleAspectFill
+                    self.imageView.layer.cornerRadius = side * 0.23
+                    self.imageView.clipsToBounds = true
+                case let .carousel(keys):
+                    self.imageView.isHidden = true
+                    self.carouselView.isHidden = false
+                    self.carouselView.configure(keys: keys, locked: item.locked)
+                case .none:
+                    self.imageView.isHidden = true
+                    self.carouselView.isHidden = true
+                }
+
+                let constrained = CGSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude)
+                let titleSize = self.titleNode.updateLayout(constrained)
+                let textSize = self.textNode.updateLayout(constrained)
+
+                var y = topPadding
+                if side > 0.0 {
+                    let iconFrame = CGRect(x: floor((params.width - side) / 2.0), y: y, width: side, height: side)
+                    self.imageView.frame = iconFrame
+                    self.carouselView.frame = iconFrame
+                    y += side + 16.0
+                }
+                self.titleNode.frame = CGRect(origin: CGPoint(x: floor((params.width - titleSize.width) / 2.0), y: y), size: titleSize)
+                y += titleSize.height + 10.0
+                self.textNode.frame = CGRect(origin: CGPoint(x: floor((params.width - textSize.width) / 2.0), y: y), size: textSize)
+            })
         }
-        let width = layout.size.width
-        let offset = self.scrollOffset
-        let side = self.iconSide
-        let iconFrame = CGRect(x: floor((width - side) / 2.0), y: 28.0 - offset, width: side, height: side)
-        self.imageView.frame = iconFrame
-        self.carouselView.frame = iconFrame
-        let titleY = side > 0.0 ? 28.0 + side + 14.0 : 24.0
-        self.titleNode.frame = CGRect(origin: CGPoint(x: floor((width - self.titleSize.width) / 2.0), y: titleY - offset), size: self.titleSize)
-        self.textNode.frame = CGRect(origin: CGPoint(x: floor((width - self.textSize.width) / 2.0), y: titleY + self.titleSize.height + 10.0 - offset), size: self.textSize)
-    }
-
-    override func updateContentOffset(_ contentOffset: CGFloat, transition: ContainedViewLayoutTransition) {
-        self.scrollOffset = contentOffset
-        self.updateFrames()
-    }
-
-    override func updateLayout(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) -> CGFloat {
-        let sideInset: CGFloat = 28.0
-        let constrainedSize = CGSize(width: layout.size.width - sideInset * 2.0, height: CGFloat.greatestFiniteMagnitude)
-        self.titleSize = self.titleNode.updateLayout(constrainedSize)
-        self.textSize = self.textNode.updateLayout(constrainedSize)
-        self.validLayout = layout
-        self.updateFrames()
-        return (self.iconSide > 0.0 ? 28.0 + self.iconSide + 14.0 : 24.0) + self.titleSize.height + 10.0 + self.textSize.height + 24.0
     }
 }

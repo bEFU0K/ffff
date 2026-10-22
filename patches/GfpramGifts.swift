@@ -10,7 +10,7 @@ import AccountContext
 import PromptUI
 
 // Подарки: вводишь @username -> видишь все подарки, которые этот человек подарил тебе ->
-// «Выбрать папку» -> все они сразу добавляются в выбранную папку (коллекцию) профиля.
+// «Выбрать коллекцию» -> все они сразу добавляются в выбранную коллекцию профиля.
 // ШАБЛОН: apply_patches.py проверяет, что нужное API есть в Telegram-iOS; иначе ставится GfpramGiftsStub.swift.
 
 private final class GfpramGiftsState {
@@ -31,7 +31,7 @@ private func gfpramGiftsEntries(state: GfpramGiftsState) -> [GfpramEntry] {
     if state.peer != nil {
         entries.append(.header(100, "НАЙДЕНО"))
         entries.append(.action(101, state.loading ? "Загружаю подарки…" : "Подарков от этого пользователя", String(state.matched.count), 0))
-        entries.append(.action(102, "Выбрать папку и добавить все", "", 2))
+        entries.append(.action(102, "Выбрать коллекцию и добавить все", "", 2))
         entries.append(.footer(103, "Просмотрено подарков в профиле: \(state.total). Подарки, отправленные анонимно, Telegram не показывает с именем отправителя, поэтому они сюда не попадают."))
     } else {
         entries.append(.footer(103, "Введите @username, ссылку t.me или числовой ID. Приложение найдёт в вашем профиле все подарки от этого человека."))
@@ -125,7 +125,7 @@ public func gfpramGiftsController(context: AccountContext) -> ViewController {
     return controller
 }
 
-// MARK: - Выбор папки
+// MARK: - Выбор коллекции
 
 private final class GfpramFoldersState {
     var collections: [StarGiftCollection] = []
@@ -146,9 +146,9 @@ private func gfpramFoldersEntries(state: GfpramFoldersState, count: Int, label: 
         listIndex += 1
     }
     if state.collections.isEmpty {
-        entries.append(.footer(index, state.loaded ? "Папок пока нет. Создайте папку в своём профиле: Подарки → «+» рядом с вкладками." : "Загружаю папки…"))
+        entries.append(.footer(index, state.loaded ? "Коллекций пока нет. Создайте коллекцию в своём профиле: Подарки → «+» рядом с вкладками." : "Загружаю коллекции…"))
     } else {
-        entries.append(.footer(index, state.progress ?? "Нажмите на папку: все \(count) подарков от \(label) будут добавлены в неё."))
+        entries.append(.footer(index, state.progress ?? "Нажмите на коллекцию: все \(count) подарков от \(label) будут добавлены в неё."))
     }
     return entries
 }
@@ -199,7 +199,7 @@ private func gfpramGiftsFoldersController(context: AccountContext, gifts: [Profi
                 return
             }
             let collection = state.collections[index]
-            presentImpl?(gfpramAlert(context: context, title: "Папка «\(collection.title)»", text: "Добавить все подарки от \(label) (\(gifts.count) шт.) в эту папку?", actions: [
+            presentImpl?(gfpramAlert(context: context, title: "Коллекция «\(collection.title)»", text: "Добавить все подарки от \(label) (\(gifts.count) шт.) в эту коллекцию?", actions: [
                 TextAlertAction(type: .genericAction, title: "Отмена", action: {}),
                 TextAlertAction(type: .defaultAction, title: "Добавить", action: {
                     state.busy = true
@@ -210,9 +210,9 @@ private func gfpramGiftsFoldersController(context: AccountContext, gifts: [Profi
                         refresh.set(true)
                     }, done: { failed in
                         state.busy = false
-                        state.progress = failed ? "Часть подарков добавить не удалось (в папке не больше 1000 подарков)." : "Готово: подарков в папке «\(collection.title)» — добавлено \(gifts.count)."
+                        state.progress = failed ? "Часть подарков добавить не удалось (в коллекции не больше 1000 подарков)." : "Готово: подарков в коллекции «\(collection.title)» — добавлено \(gifts.count)."
                         refresh.set(true)
-                        presentImpl?(gfpramAlert(context: context, title: nil, text: failed ? "Не все подарки удалось добавить. Проверьте папку в профиле: у папки есть лимит подарков." : "Все подарки добавлены в папку «\(collection.title)»."))
+                        presentImpl?(gfpramAlert(context: context, title: nil, text: failed ? "Не все подарки удалось добавить. Проверьте коллекцию в профиле: у коллекции есть лимит подарков." : "Все подарки добавлены в коллекцию «\(collection.title)»."))
                     })
                 })
             ]))
@@ -222,7 +222,7 @@ private func gfpramGiftsFoldersController(context: AccountContext, gifts: [Profi
     let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get())
     |> deliverOnMainQueue
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Выбрать папку"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Выбрать коллекцию"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramFoldersEntries(state: state, count: gifts.count, label: label), style: .blocks, animateChanges: false)
         return (controllerState, (listState, arguments))
     }

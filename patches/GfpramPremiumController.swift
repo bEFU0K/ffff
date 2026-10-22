@@ -120,7 +120,7 @@ private func gfpramPremiumEntries() -> [GfpramEntry] {
     entries.append(.feature(103, "Заглушка при упоминании", "Автоответ вашим текстом, когда вас тегают в группе. Раз в 2 минуты на группу.", 31, 2, gfpramMode("premiumStub")))
     entries.append(.feature(104, "Бэкап данных аккаунта", "Имя, ID, юзернейм и номер сохраняются в связку ключей iOS и переживают удаление приложения.", 32, 3, gfpramMode("premiumBackup")))
     entries.append(.feature(105, "⭐ рядом с моим именем", "Звезда рядом с вашим именем на этом устройстве.", 33, 4, gfpramMode("premiumStar")))
-    entries.append(.feature(106, "Автоответчик в личных чатах", "Отвечает вашим текстом каждому, кто пишет вам в личку. Раз в 10 минут на человека.", 34, 5, gfpramMode("premiumDmReply")))
+    entries.append(.iconAction(106, "Автоответчик", AyuPremium.isActive && AyuSettings.value("premiumDmReply") ? "Вкл" : "Выкл", 50, 5))
     entries.append(.feature(107, "Ответ на слово-триггер", "Слово в сообщении — и приложение само отправляет заданный ответ. Личные чаты и группы.", 35, 6, gfpramMode("premiumKeyword")))
     entries.append(.feature(108, "Копия личных сообщений в Избранное", "Все входящие личные сообщения дублируются в «Избранное», даже если собеседник их удалит.", 36, 7, gfpramMode("premiumMirror")))
     entries.append(.feature(109, "Авто-реакция на личные сообщения", "Ставит выбранную реакцию на каждое входящее личное сообщение.", 37, 8, gfpramMode("premiumReact")))
@@ -129,7 +129,7 @@ private func gfpramPremiumEntries() -> [GfpramEntry] {
 
     entries.append(.header(200, "НАСТРОЙКИ ФУНКЦИЙ"))
     entries.append(.action(201, "Текст заглушки", gfpramShort(AyuPremiumService.stubText), 11))
-    entries.append(.action(202, "Текст автоответчика", gfpramShort(AyuPremiumService.dmReplyText), 13))
+    entries.append(.action(202, "Автоответчик: тексты и режимы", "", 50))
     entries.append(.action(203, "Слово-триггер", AyuPremiumService.keywordTrigger.isEmpty ? "не задано" : gfpramShort(AyuPremiumService.keywordTrigger), 14))
     entries.append(.action(204, "Ответ на слово", AyuPremiumService.keywordReply.isEmpty ? "не задан" : gfpramShort(AyuPremiumService.keywordReply), 15))
     entries.append(.action(205, "Реакция", AyuPremiumService.reactEmoji, 16))
@@ -232,9 +232,15 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
                     needPremium()
                 }
             case 13:
-                promptText("Текст автоответчика в личных чатах", AyuPremiumService.dmReplyText, { value in
+                promptText("Текст автоответчика («не в сети»)", AyuPremiumService.dmReplyText, { value in
                     AyuPremiumService.dmReplyText = value
                 })
+            case 50:
+                if AyuPremium.isActive {
+                    pushImpl?(gfpramAutoReplyController(context: context))
+                } else {
+                    needPremium()
+                }
             case 14:
                 promptText("Слово-триггер (ищется в входящих сообщениях)", AyuPremiumService.keywordTrigger, { value in
                     AyuPremiumService.keywordTrigger = value
@@ -267,8 +273,9 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
         } else {
             headerText = "Эксклюзивные функции клиента GFPGRAM: автоответы, копии сообщений, спам-режим, бэкап аккаунта и 4 эксклюзивные иконки приложения."
         }
-        let header = GfpramPremiumHeaderItem(theme: presentationData.theme, title: "GFPGRAM Premium", text: headerText, icon: .carousel(gfpramPremiumIconKeys), locked: !AyuPremium.isActive)
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramPremiumEntries(), style: .blocks, headerItem: header, animateChanges: false)
+        var premiumEntries = gfpramPremiumEntries()
+        premiumEntries.insert(.hero(-1, "GFPGRAM Premium", headerText), at: 0)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: premiumEntries, style: .blocks, animateChanges: false)
         return (controllerState, (listState, arguments))
     }
 
@@ -276,6 +283,134 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
     pushImpl = { [weak controller] c in
         controller?.push(c)
     }
+    presentImpl = { [weak controller] c in
+        controller?.present(c, in: .window(.root))
+    }
+    return controller
+}
+
+// MARK: - Окно «Автоответчик»
+
+private func gfpramAutoReplyEntries() -> [GfpramEntry] {
+    var entries: [GfpramEntry] = []
+    entries.append(.header(0, "АВТООТВЕТЧИК"))
+    entries.append(.toggle(1, "Включить автоответчик", "premiumDmReply", AyuSettings.value("premiumDmReply")))
+    entries.append(.footer(2, "Отвечает на личные сообщения. Ботам и служебным чатам не отвечает. Работает, пока приложение запущено."))
+
+    entries.append(.header(100, "КОГДА Я НЕ В СЕТИ"))
+    entries.append(.toggle(101, "Отвечать, когда я не в сети", "arOffline", AyuSettings.value("arOffline")))
+    entries.append(.action(102, "Текст", gfpramShort(AyuPremiumService.dmReplyText), 61))
+    entries.append(.footer(103, "«Не в сети» — приложение свёрнуто или экран заблокирован."))
+
+    entries.append(.header(200, "КОГДА Я В СЕТИ"))
+    entries.append(.toggle(201, "Отвечать, когда я в сети", "arOnline", AyuSettings.value("arOnline")))
+    entries.append(.action(202, "Текст", gfpramShort(AyuPremiumService.onlineReplyText), 62))
+    entries.append(.footer(203, "«В сети» — приложение открыто. Полезно, если вы смотрите чат, но пока не готовы ответить."))
+
+    entries.append(.header(300, "НОЧЬЮ"))
+    entries.append(.toggle(301, "Ночной режим", "arNight", AyuSettings.value("arNight")))
+    entries.append(.action(302, "Текст", gfpramShort(AyuPremiumService.nightReplyText), 63))
+    entries.append(.action(303, "Ночь начинается", AyuPremiumService.hourLabel(AyuPremiumService.nightStart), 64))
+    entries.append(.action(304, "Ночь заканчивается", AyuPremiumService.hourLabel(AyuPremiumService.nightEnd), 65))
+    entries.append(.footer(305, "Ночью этот текст главнее обычных («в сети» и «не в сети»)."))
+
+    entries.append(.header(400, "ЗАНЯТ"))
+    entries.append(.toggle(401, "Режим «Занят»", "arBusy", AyuSettings.value("arBusy")))
+    entries.append(.action(402, "Текст", gfpramShort(AyuPremiumService.busyReplyText), 66))
+    entries.append(.footer(403, "Включается вручную и главнее всех остальных режимов. Не забудьте выключить, когда освободитесь."))
+
+    entries.append(.header(500, "ПАРАМЕТРЫ"))
+    entries.append(.action(501, "Не чаще, чем раз в", AyuPremiumService.minutesLabel(AyuPremiumService.replyMinutes), 70))
+    entries.append(.action(502, "Переменные в тексте", "{имя} {время}…", 71))
+    entries.append(.footer(503, "Нажмите на «Не чаще, чем раз в», чтобы сменить паузу: 1, 5, 10, 30 минут, 1 или 4 часа. Пауза считается отдельно для каждого собеседника."))
+
+    entries.append(.header(600, "ЗАГЛУШКА В ГРУППАХ"))
+    entries.append(.toggle(601, "Отвечать на упоминание", "premiumStub", AyuSettings.value("premiumStub")))
+    entries.append(.toggle(602, "Только когда я не в сети", "arStubOffline", AyuSettings.value("arStubOffline")))
+    entries.append(.action(603, "Текст заглушки", gfpramShort(AyuPremiumService.stubText, 26), 72))
+    entries.append(.footer(604, "Когда вас упоминают в группе, заглушка отвечает на это сообщение. Не чаще раза в 2 минуты на группу."))
+
+    entries.append(.header(700, "СБРОС"))
+    entries.append(.action(701, "Вернуть тексты по умолчанию", "", 73))
+    return entries
+}
+
+public func gfpramAutoReplyController(context: AccountContext) -> ViewController {
+    let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
+    var presentImpl: ((ViewController) -> Void)?
+
+    let promptText: (String, String, @escaping (String) -> Void) -> Void = { title, current, apply in
+        presentImpl?(promptController(context: context, text: title, value: current, placeholder: "", apply: { value in
+            guard let value = value else {
+                return
+            }
+            apply(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            refresh.set(true)
+        }))
+    }
+
+    let promptHour: (String, Int, @escaping (Int) -> Void) -> Void = { title, current, apply in
+        presentImpl?(promptController(context: context, text: title, value: String(current), placeholder: "0–23", apply: { value in
+            guard let value = value, let hour = Int(value.trimmingCharacters(in: .whitespacesAndNewlines)), hour >= 0, hour <= 23 else {
+                presentImpl?(gfpramAlert(context: context, title: nil, text: "Введите час от 0 до 23"))
+                return
+            }
+            apply(hour)
+            refresh.set(true)
+        }))
+    }
+
+    let arguments = GfpramArguments(
+        toggle: { key, value in
+            AyuSettings.set(key, value)
+            refresh.set(true)
+        },
+        perform: { kind in
+            switch kind {
+            case 61:
+                promptText("Текст «когда я не в сети»", AyuPremiumService.dmReplyText, { AyuPremiumService.dmReplyText = $0 })
+            case 62:
+                promptText("Текст «когда я в сети»", AyuPremiumService.onlineReplyText, { AyuPremiumService.onlineReplyText = $0 })
+            case 63:
+                promptText("Текст для ночи", AyuPremiumService.nightReplyText, { AyuPremiumService.nightReplyText = $0 })
+            case 64:
+                promptHour("Во сколько начинается ночь (час, 0–23)", AyuPremiumService.nightStart, { AyuPremiumService.nightStart = $0 })
+            case 65:
+                promptHour("Во сколько заканчивается ночь (час, 0–23)", AyuPremiumService.nightEnd, { AyuPremiumService.nightEnd = $0 })
+            case 66:
+                promptText("Текст режима «Занят»", AyuPremiumService.busyReplyText, { AyuPremiumService.busyReplyText = $0 })
+            case 70:
+                AyuPremiumService.nextReplyMinutes()
+                refresh.set(true)
+            case 71:
+                presentImpl?(gfpramAlert(context: context, title: "Переменные", text: "В тексте можно писать:\n{имя} — имя собеседника\n{чат} — название чата\n{время} — текущее время\n{дата} — сегодняшняя дата\n{до} — когда заканчивается ночь\n\nНапример: «Привет, {имя}! Сейчас {время}, отвечу после {до}.»"))
+            case 72:
+                promptText("Текст заглушки при упоминании", AyuPremiumService.stubText, { AyuPremiumService.stubText = $0 })
+            case 73:
+                presentImpl?(gfpramAlert(context: context, title: "Вернуть тексты?", text: "Все тексты автоответчика и заглушки станут такими, как при установке.", actions: [
+                    TextAlertAction(type: .genericAction, title: "Отмена", action: {}),
+                    TextAlertAction(type: .destructiveAction, title: "Вернуть", action: {
+                        AyuPremiumService.resetTexts()
+                        refresh.set(true)
+                    })
+                ]))
+            default:
+                break
+            }
+        }
+    )
+
+    let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get())
+    |> deliverOnMainQueue
+    |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
+        var list = gfpramAutoReplyEntries()
+        list.insert(.hero(-1, "Автоответчик", "Свой текст для каждой ситуации: когда вы не в сети, в сети, ночью или заняты."), at: 0)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: list, style: .blocks, animateChanges: false)
+        return (controllerState, (listState, arguments))
+    }
+
+    let controller = ItemListController(context: context, state: signal)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }

@@ -192,12 +192,15 @@ private final class GfpramIconArguments {
 }
 
 private enum GfpramIconEntry: ItemListNodeEntry {
+    case hero(Int32, String, String)
     case header(Int32, String)
     case icon(Int32, Int32, Bool, Bool)
     case footer(Int32, String)
 
     var entryId: Int32 {
         switch self {
+        case let .hero(entryId, _, _):
+            return entryId
         case let .header(entryId, _):
             return entryId
         case let .icon(entryId, _, _, _):
@@ -208,6 +211,9 @@ private enum GfpramIconEntry: ItemListNodeEntry {
     }
 
     var section: ItemListSectionId {
+        if self.entryId < 0 {
+            return -1
+        }
         return self.entryId / 100
     }
 
@@ -222,6 +228,8 @@ private enum GfpramIconEntry: ItemListNodeEntry {
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
         let arguments = arguments as! GfpramIconArguments
         switch self {
+        case let .hero(_, title, text):
+            return GfpramPremiumHeaderItem(theme: presentationData.theme, title: title, text: text, icon: .carousel(gfpramPremiumIconKeys), locked: !AyuPremium.isActive, sectionId: self.section)
         case let .header(_, text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
         case let .icon(_, index, locked, selected):
@@ -301,8 +309,9 @@ public func gfpramIconsController(context: AccountContext) -> ViewController {
     |> deliverOnMainQueue
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
-        let header = GfpramPremiumHeaderItem(theme: presentationData.theme, title: "Иконка приложения", text: "Выберите иконку GFPGRAM. Значок замка — иконка доступна только с Premium.", icon: .carousel(gfpramPremiumIconKeys), locked: !AyuPremium.isActive)
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: gfpramIconEntries(), style: .blocks, headerItem: header, animateChanges: false)
+        var iconEntries = gfpramIconEntries()
+        iconEntries.insert(.hero(-1, "Иконка приложения", "Выберите иконку GFPGRAM. Значок замка — иконка доступна только с Premium."), at: 0)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: iconEntries, style: .blocks, animateChanges: false)
         return (controllerState, (listState, arguments))
     }
 

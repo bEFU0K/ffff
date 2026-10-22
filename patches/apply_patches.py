@@ -562,11 +562,8 @@ else:
     if n == 0:
         print("MISSING gfp-icons-list")
 
-# Профиль: плашка «# — официальный аккаунт клиента» + «ID» и «страна номера» под именем пользователя
+# Профиль: «ID» и «страна номера» под именем пользователя (описание значка — отдельный патч gfp-profile-verified ниже)
 PROFILE_ITEMS = (
-    '        if let ayuVerified = AyuVerified.text(id: user.id.id._internalGetInt64Value(), username: user.username) {\n'
-    '            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3102, label: "#", text: ayuVerified, textColor: .primary, action: nil, requestLayout: { _ in }))\n'
-    '        }\n'
     '        items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3100, label: "ID", text: String(user.id.id._internalGetInt64Value()), textColor: .primary, action: { _, _ in\n'
     '            UIPasteboard.general.string = String(user.id.id._internalGetInt64Value())\n'
     '        }, requestLayout: { _ in }))\n'
@@ -578,6 +575,107 @@ patch("gfp-profile-id",
       r"(\n)(        if let cachedData = data\.cachedData as\? CachedUserData \{\n            if let birthday = cachedData\.birthday \{)",
       lambda m: m.group(1) + PROFILE_ITEMS + "\n" + m.group(2),
       base=PEER_INFO, filename="PeerInfoProfileItems.swift")
+
+# Описание значка под карточкой профиля — как «This bot was verified by ...» у Major.
+# Берём штатную строку-комментарий PeerInfoScreenCommentItem. Если её init в этой сборке Telegram-iOS не подходит
+# (нет id/text или есть обязательные параметры), ставим обычную строку «GFPGRAM» внутри карточки — сборка не падает.
+def _split_top(params):
+    parts, depth, cur = [], 0, ""
+    for ch in params:
+        if ch in "([<":
+            depth += 1
+        elif ch in ")]>":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    return parts
+
+def _comment_item_usable():
+    for p in walk(PEER_INFO):
+        if os.path.basename(p) != "PeerInfoScreenCommentItem.swift":
+            continue
+        src = read(p)
+        cls = src.find("class PeerInfoScreenCommentItem")
+        i = src.find("init(", cls if cls >= 0 else 0)
+        if i < 0:
+            return False
+        j, depth = i + 5, 1
+        while j < len(src) and depth:
+            depth += {"(": 1, ")": -1}.get(src[j], 0)
+            j += 1
+        params = _split_top(src[i + 5:j - 1])
+        if len(params) < 2 or not params[0].startswith("id:") or not params[1].startswith("text:"):
+            return False
+        return all("=" in x for x in params[2:])
+    return False
+
+def _insert_verified_footer():
+    label = "gfp-profile-verified"
+    if label in disabled:
+        print(f"SKIP {label}: disabled"); return
+    verified_if = '        if let ayuVerified = AyuVerified.text(id: user.id.id._internalGetInt64Value(), username: user.username) {\n'
+    for p in walk(PEER_INFO):
+        if os.path.basename(p) != "PeerInfoProfileItems.swift":
+            continue
+        src = read(p)
+        anchor = src.find("        if let cachedData = data.cachedData as? CachedUserData {\n")
+        if anchor < 0 or "AyuVerified" in src:
+            continue
+        if _comment_item_usable():
+            # ищем конец блока cachedData (парные фигурные скобки), вставляем описание после него — под всей карточкой
+            depth, j = 0, src.find("{", anchor)
+            while j < len(src):
+                if src[j] == "{": depth += 1
+                elif src[j] == "}":
+                    depth -= 1
+                    if depth == 0: break
+                j += 1
+            if j < len(src):
+                end = src.find("\n", j) + 1
+                block = verified_if + '            items[currentPeerInfoSection]!.append(PeerInfoScreenCommentItem(id: 3102, text: ayuVerified))\n        }\n'
+                write(p, src[:end] + block + src[end:])
+                hits_by_label[label] = hits_by_label.get(label, 0) + 1
+                print(f"OK   {label}: footer (PeerInfoScreenCommentItem) in {os.path.relpath(p, root)}")
+                return
+        block = verified_if + '            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3102, label: "GFPGRAM", text: ayuVerified, textColor: .primary, action: nil, requestLayout: { _ in }))\n        }\n'
+        write(p, src[:anchor] + block + src[anchor:])
+        hits_by_label[label] = hits_by_label.get(label, 0) + 1
+        print(f"OK   {label}: row fallback (CommentItem не подошёл) in {os.path.relpath(p, root)}")
+        return
+    print(f"MISSING {label}: anchor not found")
+_insert_verified_footer()
+
+# Оформление: вместо сетки иконок — кнопка «Изменить иконку» (открывает окно иконок GFPGRAM)
+def _appearance_icon_button():
+    label = "gfp-appearance-icons"
+    if label in disabled:
+        print(f"SKIP {label}: disabled"); return
+    for p in walk(os.path.join(root, "submodules/SettingsUI")):
+        if os.path.basename(p) != "ThemeSettingsController.swift":
+            continue
+        src = read(p)
+        item_re = re.compile(r"return ThemeSettingsAppIconItem\((?:(?!\n        case ).)*?updated: \{ icon in\n\s*arguments\.selectAppIcon\(icon\)\n\s*\}\)", re.S)
+        sel_re = re.compile(r"selectAppIcon: \{ icon in\n")
+        m_sel = sel_re.search(src)
+        push_decl = src.find("var pushControllerImpl")
+        if not (item_re.search(src) and m_sel and 0 <= push_decl < m_sel.start() and "func item(presentationData: ItemListPresentationData, arguments: Any)" in src):
+            print(f"MISSING {label}: структура ThemeSettingsController.swift не совпала, сетка иконок осталась как есть")
+            return
+        button = ('return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: nil, title: "Изменить иконку", label: "", labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {\n'
+                  '                arguments.selectAppIcon(PresentationAppIcon(name: "gfpram.open", imageName: "gfpram.open"))\n'
+                  '            })')
+        src = item_re.sub(lambda m: button, src, count=1)
+        src = sel_re.sub(lambda m: m.group(0) + '            if icon.name == "gfpram.open" {\n                pushControllerImpl?(gfpramIconsController(context: context))\n                return\n            }\n', src, count=1)
+        write(p, src)
+        hits_by_label[label] = hits_by_label.get(label, 0) + 1
+        print(f"OK   {label}: кнопка вместо сетки в {os.path.relpath(p, root)}")
+        return
+    print(f"MISSING {label}: ThemeSettingsController.swift not found")
+_appearance_icon_button()
 
 # Фоновые функции Premium (заглушка при упоминании, бэкап): запускаются при открытии списка чатов
 patch("gfp-premium-start",
@@ -666,6 +764,64 @@ else:
         shutil.copy(os.path.join(here, "AyuCloudStub.swift"), os.path.join(core, "AyuCloud.swift"))
         print(f"::warning::gfp-cloud: облачная копия Premium отключена (заглушка): {_why}. Локальные копии работают.")
 
+# ======================= Авто-реакция (Premium) =======================
+# Метод установки реакции в Telegram-iOS меняет имя и параметры. Ищем реальную сигнатуру в чекауте и подставляем
+# вызов вместо __AYU_REACT__ в AyuPremium.swift. Если сигнал не запустить (.start()), реакция просто не отправится.
+def check_react():
+    """Возвращает (Swift-вызов, причина провала)."""
+    reaction_ok = False
+    cands = []
+    for p, src in _all_core_sources():
+        if not reaction_ok:
+            m = re.search(r"enum\s+UpdateMessageReaction\b[^{]*\{(.*?)^\}", src, re.S | re.M)
+            if m and re.search(r"case\s+builtin\(\s*(?:value:\s*)?String\s*\)", m.group(1)):
+                reaction_ok = True
+        if "TelegramEngine" in p:
+            for name in ("setMessageReactions", "updateMessageReactionsInteractively"):
+                for params, tail in _balanced_params(src, name):
+                    cands.append((name, params, tail.split("{")[0]))
+    if not reaction_ok:
+        return None, "не найден enum UpdateMessageReaction с case builtin(String)"
+    if not cands:
+        return None, "не найден TelegramEngine.Messages.setMessageReactions / updateMessageReactionsInteractively"
+    why = []
+    for name, params, tail in sorted(cands, key=lambda c: c[0] != "setMessageReactions"):
+        args, bad = [], None
+        for item in params:
+            head = item.split(":")[0].split()
+            label = head[0] if head else ""
+            inner = head[-1] if head else ""
+            if inner in ("ids", "messageIds"): value = "[ayuMessageId]"
+            elif inner in ("id", "messageId"): value = "ayuMessageId"
+            elif inner == "reactions": value = "[.builtin(ayuEmoji)]"
+            elif inner in ("isLarge", "storeAsRecentlyUsed", "add"): value = "false"
+            elif "=" in item: continue
+            else: bad = item; break
+            args.append(value if label == "_" else f"{label}: {value}")
+        if bad:
+            why.append(f"{name}: не знаю значение для параметра {bad}")
+            continue
+        call = f"ayuEngine.messages.{name}(" + ", ".join(args) + ")"
+        if "Signal" in tail:
+            call = "let _ = " + call + ".start()"
+        else:
+            call = "let _ = " + call
+        return call, None
+    return None, "; ".join(why)
+
+_ayu_prem = os.path.join(core, "AyuPremium.swift")
+_ayu_src = read(_ayu_prem)
+if "gfp-react" in disabled:
+    _call, _why = None, "disabled"
+else:
+    _call, _why = check_react()
+if _call:
+    write(_ayu_prem, _ayu_src.replace("__AYU_REACT__", _call))
+    print(f"OK   gfp-react: авто-реакция, вызов: {_call}")
+else:
+    write(_ayu_prem, _ayu_src.replace("__AYU_REACT__", "_ = ayuEngine; _ = ayuMessageId; _ = ayuEmoji"))
+    print(f"::warning::gfp-react: авто-реакция отключена (заглушка): {_why}")
+
 def check_gifts():
     """Проверяет API профильных подарков и папок. Возвращает список причин провала (пусто = всё ок)."""
     ctx_src = col_src = ""
@@ -710,10 +866,22 @@ else:
     _gwhy = check_gifts()
     if not _gwhy:
         shutil.copy(os.path.join(here, "GfpramGifts.swift"), _gift_target)
-        print("OK   gfp-gifts: массовое добавление подарков в папку")
+        print("OK   gfp-gifts: массовое добавление подарков в коллекцию")
     else:
         shutil.copy(os.path.join(here, "GfpramGiftsStub.swift"), _gift_target)
         print("::warning::gfp-gifts: массовое добавление подарков отключено (заглушка): " + "; ".join(_gwhy))
+        # Диагностика: настоящие сигнатуры API коллекций подарков из этого Telegram-iOS — по ним подгоняется GfpramGifts.swift
+        for _p, _src in _all_core_sources():
+            if re.search(r"class\s+ProfileGiftsCollectionsContext\b", _src):
+                print("INFO gifts-api file: " + os.path.relpath(_p, root))
+                _i = _src.find("class ProfileGiftsCollectionsContext")
+                for _line in _src[_i:].split("\n"):
+                    _t = _line.strip()
+                    if re.match(r"(public |private |fileprivate )?(init\(|func |var |let |final class |struct |enum |case )", _t) and not _t.startswith("private"):
+                        print("INFO gifts-api: " + _t[:220])
+                    if _line.startswith("}"):
+                        break
+                break
 
 # ---------- Автоподстройка под актуальный API Telegram-iOS ----------
 # API Telegram меняется (EngineOutgoingMessageContent.text получил доп. аргументы и т.п.).
