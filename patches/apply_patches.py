@@ -333,6 +333,32 @@ def _adapt_premium_ui():
                 break
             if _t.startswith(("func ", "var ", "static ", "associatedtype ", "init")):
                 print("INFO ListViewItem: " + _t[:260])
+    if proto:
+        def _sig(text, name):
+            i = text.find("func " + name + "(")
+            if i < 0:
+                return None
+            j = text.find("(", i)
+            d = 0
+            for k in range(j, len(text)):
+                if text[k] == "(": d += 1
+                elif text[k] == ")":
+                    d -= 1
+                    if d == 0:
+                        return i, k + 1
+            return None
+        for _name in ("nodeConfiguredForParams", "updateNode"):
+            a = _sig(proto, _name)
+            b = _sig(src, _name)
+            if not a or not b:
+                print("::warning::gfp-premiumui: не нашёл сигнатуру " + _name)
+                continue
+            want = re.sub(r"\s+", " ", proto[a[0]:a[1]])
+            have = re.sub(r"\s+", " ", src[b[0]:b[1]])
+            if want != have:
+                src = src[:b[0]] + want + src[b[1]:]
+                print("OK   gfp-premiumui: сигнатура " + _name + " подогнана под протокол ListViewItem")
+                print("INFO new " + _name + ": " + want[:300])
     write(target, src)
 _adapt_premium_ui()
 
