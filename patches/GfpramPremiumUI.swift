@@ -176,7 +176,7 @@ final class GfpramPremiumHeaderItemNode: ListViewItemNode {
     private var iconSide: CGFloat = 0.0
 
     init() {
-        super.init(layerBacked: false)
+        super.init(layerBacked: false, dynamicBounce: false)
 
         self.titleNode.isUserInteractionEnabled = false
         self.titleNode.maximumNumberOfLines = 0

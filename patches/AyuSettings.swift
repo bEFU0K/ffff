@@ -89,6 +89,18 @@ private final class AyuStore: @unchecked Sendable {
         }
         AyuStore.merge(&merged, with: legacy)
 
+        // Чистим историю: подряд идущие одинаковые версии (мусор от старых сборок) схлопываем
+        for (key, list) in merged.edits {
+            var clean: [AyuEditEntry] = []
+            for entry in list where clean.last?.text != entry.text {
+                clean.append(entry)
+            }
+            if clean.isEmpty {
+                merged.edits.removeValue(forKey: key)
+            } else {
+                merged.edits[key] = clean
+            }
+        }
         self.data = merged
         self.deletedSet = Set(merged.deleted)
         self.scheduleSave()
@@ -286,7 +298,6 @@ enum AyuPersist {
                 try? data.write(to: url, options: [.atomic])
             }
             AyuKeychain.set(keychainKey, data: data)
-            AyuCloud.scheduleBackup()
         }
     }
 }
@@ -354,12 +365,23 @@ public enum AyuSettings {
     }
 
     /// Переключатели, которые по умолчанию выключены.
-    private static let defaultOff: Set<String> = ["showIds", "premiumStub", "premiumDmReply", "premiumKeyword", "premiumMirror", "premiumReact", "premiumMentions", "arOnline", "arBusy", "arNight", "arStubOffline"]
+    private static let defaultOff: Set<String> = ["showIds", "premiumStub", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline"]
 
-    private static func flagKey(_ key: String) -> Bool {
+    /// Переключатели Premium: у каждого аккаунта свои.
+    private static let accountKeys: Set<String> = ["premiumStub", "premiumBackup", "premiumStar", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline", "arOffline"]
+
+    private static func storageKey(_ key: String, account: Int64?) -> String {
+        if accountKeys.contains(key) {
+            return AyuScope.key(key, id: account)
+        }
+        return "ayu." + key
+    }
+
+    private static func flagKey(_ key: String, account: Int64? = nil) -> Bool {
         _ = AyuPersist.ready
-        if UserDefaults.standard.object(forKey: "ayu." + key) == nil { return !defaultOff.contains(key) }
-        return UserDefaults.standard.bool(forKey: "ayu." + key)
+        let storage = storageKey(key, account: account)
+        if UserDefaults.standard.object(forKey: storage) == nil { return !defaultOff.contains(key) }
+        return UserDefaults.standard.bool(forKey: storage)
     }
 
     /// Значение переключателя по короткому ключу (например "ghostRead").
@@ -370,12 +392,26 @@ public enum AyuSettings {
         return flagKey(key)
     }
 
+    /// Значение переключателя Premium для конкретного аккаунта.
+    public static func value(_ key: String, account: Int64) -> Bool {
+        return flagKey(key, account: account)
+    }
+
+    /// Семейство шрифта интерфейса ("" — системный). Применяется после перезапуска.
+    public static var fontFamily: String {
+        get { return UserDefaults.standard.string(forKey: "ayu.fontFamily") ?? "" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "ayu.fontFamily")
+            AyuPersist.schedule()
+        }
+    }
+
     public static func set(_ key: String, _ value: Bool) {
         if key == "ghostMode" {
             self.setGhostMaster(value)
             return
         }
-        UserDefaults.standard.set(value, forKey: "ayu." + key)
+        UserDefaults.standard.set(value, forKey: storageKey(key, account: nil))
         AyuPersist.schedule()
     }
 
@@ -412,8 +448,8 @@ public enum AyuSettings {
     public static var showIds: Bool { return flagKey("showIds") }
 
     public static var ownUsername: String? {
-        get { return UserDefaults.standard.string(forKey: "ayu.ownUsername") }
-        set { UserDefaults.standard.set(newValue, forKey: "ayu.ownUsername") }
+        get { return UserDefaults.standard.string(forKey: AyuScope.key("ownUsername")) }
+        set { UserDefaults.standard.set(newValue, forKey: AyuScope.key("ownUsername")) }
     }
 
     // MARK: - Скрытый вход в админ-панель
@@ -421,12 +457,6 @@ public enum AyuSettings {
     public static var adminUnlocked: Bool {
         _ = AyuPersist.ready
         return UserDefaults.standard.bool(forKey: "ayu.adminUnlocked")
-    }
-
-    /// Возвращает админ-доступ из облачной копии (после обновления/переустановки).
-    static func adoptAdmin() {
-        UserDefaults.standard.set(true, forKey: "ayu.adminUnlocked")
-        AyuPersist.schedule()
     }
 
     public static func verifyAdminCode(_ code: String) -> Bool {
@@ -453,6 +483,12 @@ public enum AyuEditHistory {
         return AyuStore.shared.editHistory(key(id))
     }
 
+    /// Сообщение действительно изменено: у него есть прошлая версия, отличающаяся от текущего текста.
+    public static func isEdited(id: MessageId, text: String) -> Bool {
+        guard let last = AyuStore.shared.editEntries(key(id)).last else { return false }
+        return last.text != text
+    }
+
     /// Все прошлые версии с временем замены: [0] — оригинал, дальше по порядку правок.
     public static func entries(id: MessageId) -> [AyuEditEntry] {
         return AyuStore.shared.editEntries(key(id))
@@ -474,53 +510,6 @@ public enum AyuDeleted {
     }
 }
 
-/// Аккаунты, в которые вы входили в этом приложении. Список лежит в UserDefaults («ayu.»), поэтому
-/// попадает в файл, связку ключей и облачную копию. Нужен, чтобы ⭐ и значок «#» работали на всех ваших аккаунтах.
-public enum AyuOwnAccounts {
-    private static let key = "ayu.ownIds"
-    private static let lock = NSLock()
-
-    public static func ids() -> [String] {
-        _ = AyuPersist.ready
-        return UserDefaults.standard.stringArray(forKey: key) ?? []
-    }
-
-    public static func contains(_ id: Int64) -> Bool {
-        return ids().contains(String(id))
-    }
-
-    /// true, если аккаунт добавлен впервые.
-    @discardableResult
-    static func register(_ id: Int64) -> Bool {
-        if id == 0 { return false }
-        lock.lock()
-        defer { lock.unlock() }
-        var list = ids()
-        let text = String(id)
-        if list.contains(text) { return false }
-        list.append(text)
-        UserDefaults.standard.set(list, forKey: key)
-        AyuPersist.schedule()
-        return true
-    }
-
-    /// Слияние со списком из облачной копии.
-    static func merge(_ other: [String]) {
-        lock.lock()
-        defer { lock.unlock() }
-        var list = ids()
-        var changed = false
-        for item in other where Int64(item) != nil && !list.contains(item) {
-            list.append(item)
-            changed = true
-        }
-        if changed {
-            UserDefaults.standard.set(list, forKey: key)
-            AyuPersist.schedule()
-        }
-    }
-}
-
 /// Локальный значок «#» (виден только на этом устройстве).
 public enum AyuBadges {
     public static func contains(_ id: Int64) -> Bool {
@@ -533,23 +522,6 @@ public enum AyuBadges {
 
     public static func remove(id: Int64) {
         AyuStore.shared.setBadge(String(id), name: nil)
-    }
-
-    /// Добавляет значки из облачной копии, ничего не затирая.
-    static func merge(_ items: [String: String]) {
-        for (key, name) in items where Int64(key) != nil && !AyuStore.shared.hasBadge(key) {
-            AyuStore.shared.setBadge(key, name: name)
-        }
-    }
-
-    /// Новый свой аккаунт получает значок, если он уже есть у другого вашего аккаунта на этом устройстве.
-    static func inheritForNewOwn(id: Int64) {
-        let key = String(id)
-        if AyuStore.shared.hasBadge(key) { return }
-        for other in AyuOwnAccounts.ids() where other != key && AyuStore.shared.hasBadge(other) {
-            AyuStore.shared.setBadge(key, name: "Я")
-            return
-        }
     }
 
     public static func entries() -> [(id: Int64, name: String)] {

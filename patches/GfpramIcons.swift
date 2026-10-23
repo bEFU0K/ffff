@@ -278,6 +278,7 @@ private func gfpramIconEntries() -> [GfpramIconEntry] {
 }
 
 public func gfpramIconsController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var pushImpl: ((ViewController) -> Void)?
     var presentImpl: ((ViewController) -> Void)?

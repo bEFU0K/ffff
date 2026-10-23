@@ -119,6 +119,7 @@ private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?,
     }
     entries.append(.header(base, "ПРИЛОЖЕНИЕ"))
     entries.append(.action(base + 1, "Иконка приложения", "", 0))
+    entries.append(.action(base + 4, "Шрифт приложения", AyuSettings.fontFamily.isEmpty ? "Системный" : AyuSettings.fontFamily, 6))
     entries.append(.action(base + 5, "Подарки: добавить все в коллекцию", "", 5))
     entries.append(.action(base + 2, "О GFPGRAM", AyuSettings.version, 1))
     if adminUnlocked {
@@ -128,6 +129,7 @@ private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?,
 }
 
 public func gfpramSettingsController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var pushImpl: ((ViewController) -> Void)?
     var presentImpl: ((ViewController) -> Void)?
@@ -143,6 +145,8 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
                 pushImpl?(gfpramIconsController(context: context))
             case 5:
                 pushImpl?(gfpramGiftsController(context: context))
+            case 6:
+                pushImpl?(gfpramFontController(context: context))
             case 1:
                 presentImpl?(promptController(context: context, text: "Введите ключ", value: nil, placeholder: "", apply: { value in
                     guard let value = value else {
@@ -175,6 +179,7 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
     let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get(), ownPeer)
     |> deliverOnMainQueue
     |> map { presentationData, _, ownPeer -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
         var ownPhone: String?
         var ownUsername: String?
         if let ownPeer = ownPeer, case let .user(user) = ownPeer {
@@ -228,6 +233,7 @@ private func gfpramAdminEntries() -> [GfpramEntry] {
 }
 
 public func gfpramAdminController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var presentImpl: ((ViewController) -> Void)?
 

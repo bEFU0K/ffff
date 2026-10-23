@@ -90,12 +90,8 @@ private func gfpramToggleKey(_ kind: Int32) -> String? {
         return "premiumDmReply"
     case 35:
         return "premiumKeyword"
-    case 36:
-        return "premiumMirror"
     case 37:
         return "premiumReact"
-    case 38:
-        return "premiumMentions"
     default:
         return nil
     }
@@ -121,20 +117,17 @@ private func gfpramPremiumEntries() -> [GfpramEntry] {
     entries.append(.feature(104, "Бэкап данных аккаунта", "Имя, ID, юзернейм и номер сохраняются в связку ключей iOS и переживают удаление приложения.", 32, 3, gfpramMode("premiumBackup")))
     entries.append(.feature(105, "⭐ рядом с моим именем", "Звезда рядом с вашим именем на этом устройстве.", 33, 4, gfpramMode("premiumStar")))
     entries.append(.iconAction(106, "Автоответчик", AyuPremium.isActive && AyuSettings.value("premiumDmReply") ? "Вкл" : "Выкл", 50, 5))
-    entries.append(.feature(107, "Ответ на слово-триггер", "Слово в сообщении — и приложение само отправляет заданный ответ. Личные чаты и группы.", 35, 6, gfpramMode("premiumKeyword")))
-    entries.append(.feature(108, "Копия личных сообщений в Избранное", "Все входящие личные сообщения дублируются в «Избранное», даже если собеседник их удалит.", 36, 7, gfpramMode("premiumMirror")))
+    entries.append(.feature(107, "Ответ на слово-триггер", "До 20 слов: на каждое свой ответ и свой чат (или все чаты). Личные чаты и группы.", 35, 6, gfpramMode("premiumKeyword")))
     entries.append(.feature(109, "Авто-реакция на личные сообщения", "Ставит выбранную реакцию на каждое входящее личное сообщение.", 37, 8, gfpramMode("premiumReact")))
-    entries.append(.feature(110, "Журнал упоминаний", "Каждое упоминание вас в группе копируется в «Избранное» с названием чата.", 38, 9, gfpramMode("premiumMentions")))
     entries.append(.footer(111, "Нажмите на функцию, чтобы включить или выключить её. Тексты, слово-триггер и реакция настраиваются ниже."))
 
     entries.append(.header(200, "НАСТРОЙКИ ФУНКЦИЙ"))
     entries.append(.action(201, "Текст заглушки", gfpramShort(AyuPremiumService.stubText), 11))
     entries.append(.action(202, "Автоответчик: тексты и режимы", "", 50))
-    entries.append(.action(203, "Слово-триггер", AyuPremiumService.keywordTrigger.isEmpty ? "не задано" : gfpramShort(AyuPremiumService.keywordTrigger), 14))
-    entries.append(.action(204, "Ответ на слово", AyuPremiumService.keywordReply.isEmpty ? "не задан" : gfpramShort(AyuPremiumService.keywordReply), 15))
+    entries.append(.action(203, "Слова-триггеры и ответы", AyuPremiumService.triggers.isEmpty ? "не заданы" : String(AyuPremiumService.triggers.count) + " из " + String(AyuPremiumService.maxTriggers), 17))
     entries.append(.action(205, "Реакция", AyuPremiumService.reactEmoji, 16))
     entries.append(.action(206, "Бэкапы аккаунтов", String(AyuBackup.entries().count), 12))
-    entries.append(.footer(207, "Автоответы и копии работают только пока приложение запущено. Автоответ не отправляется ботам. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS; сам вход (сессию) он не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
+    entries.append(.footer(207, "Premium, тексты и слова у каждого аккаунта свои. Автоответы и копии работают только пока приложение запущено. Автоответ не отправляется ботам. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS; сам вход (сессию) он не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
 
     entries.append(.header(300, "ПОДДЕРЖКА"))
     entries.append(.iconAction(301, "Тех-поддержка", "@" + AyuPremium.supportUsername, 20, 101))
@@ -142,6 +135,7 @@ private func gfpramPremiumEntries() -> [GfpramEntry] {
 }
 
 public func gfpramPremiumController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var pushImpl: ((ViewController) -> Void)?
     var presentImpl: ((ViewController) -> Void)?
@@ -241,14 +235,12 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
                 } else {
                     needPremium()
                 }
-            case 14:
-                promptText("Слово-триггер (ищется в входящих сообщениях)", AyuPremiumService.keywordTrigger, { value in
-                    AyuPremiumService.keywordTrigger = value
-                })
-            case 15:
-                promptText("Ответ на слово-триггер", AyuPremiumService.keywordReply, { value in
-                    AyuPremiumService.keywordReply = value
-                })
+            case 17:
+                if AyuPremium.isActive {
+                    pushImpl?(gfpramTriggersController(context: context))
+                } else {
+                    needPremium()
+                }
             case 16:
                 promptText("Эмодзи для авто-реакции (одна реакция, например 👍 ❤️ 🔥)", AyuPremiumService.reactEmoji, { value in
                     AyuPremiumService.reactEmoji = value
@@ -266,6 +258,7 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
     let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get())
     |> deliverOnMainQueue
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
         let headerText: String
         if AyuPremium.isActive {
@@ -336,6 +329,7 @@ private func gfpramAutoReplyEntries() -> [GfpramEntry] {
 }
 
 public func gfpramAutoReplyController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var presentImpl: ((ViewController) -> Void)?
 
@@ -387,7 +381,7 @@ public func gfpramAutoReplyController(context: AccountContext) -> ViewController
             case 72:
                 promptText("Текст заглушки при упоминании", AyuPremiumService.stubText, { AyuPremiumService.stubText = $0 })
             case 73:
-                presentImpl?(gfpramAlert(context: context, title: "Вернуть тексты?", text: "Все тексты автоответчика и заглушки станут такими, как при установке.", actions: [
+                presentImpl?(gfpramAlert(context: context, title: "Вернуть тексты?", text: "Тексты автоответчика и заглушки этого аккаунта станут такими, как при установке.", actions: [
                     TextAlertAction(type: .genericAction, title: "Отмена", action: {}),
                     TextAlertAction(type: .destructiveAction, title: "Вернуть", action: {
                         AyuPremiumService.resetTexts()
@@ -403,6 +397,7 @@ public func gfpramAutoReplyController(context: AccountContext) -> ViewController
     let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, refresh.get())
     |> deliverOnMainQueue
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(""), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back))
         var list = gfpramAutoReplyEntries()
         list.insert(.hero(-1, "Автоответчик", "Свой текст для каждой ситуации: когда вы не в сети, в сети, ночью или заняты."), at: 0)
@@ -466,6 +461,7 @@ private func gfpramSpamEntries(state: GfpramSpamState) -> [GfpramEntry] {
 }
 
 public func gfpramSpamController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var presentImpl: ((ViewController) -> Void)?
     let state = GfpramSpamState()
@@ -587,6 +583,7 @@ private func gfpramBackupEntries() -> [GfpramEntry] {
 }
 
 public func gfpramBackupController(context: AccountContext) -> ViewController {
+    AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var presentImpl: ((ViewController) -> Void)?
 

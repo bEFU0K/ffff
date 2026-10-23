@@ -132,8 +132,8 @@ patch("keep-cleared",
       filename="AccountStateManagementUtils.swift")
 
 patch("edit-history",
-      r"(case let \.EditMessage\(id, [A-Za-z_]+\):\n)",
-      r"\1                if let ayuPrev = transaction.getMessage(id) { AyuEditHistory.record(id: id, text: ayuPrev.text) }\n",
+      r"(case let \.EditMessage\(id, ([A-Za-z][A-Za-z0-9_]*)\):\n)",
+      r"\1                if let ayuPrev = transaction.getMessage(id), ayuPrev.text != \2.text { AyuEditHistory.record(id: id, text: ayuPrev.text) }\n",
       filename="AccountStateManagementUtils.swift")
 
 # Самоудаляющиеся сообщения не стираются
@@ -297,9 +297,9 @@ shutil.copy(os.path.join(here, "GfpramSettingsController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift"))
 shutil.copy(os.path.join(here, "GfpramPremiumController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"))
-for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift", "GfpramIconImages.swift", "GfpramEditHistory.swift"):
+for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift", "GfpramIconImages.swift", "GfpramEditHistory.swift", "GfpramTriggers.swift", "GfpramFont.swift"):
     shutil.copy(os.path.join(here, _extra), os.path.join(root, "submodules/SettingsUI/Sources/" + _extra))
-print("OK   GfpramSettingsController/PremiumController/PremiumUI/Assets/Icons/IconImages/EditHistory added")
+print("OK   GfpramSettingsController/PremiumController/PremiumUI/Assets/Icons/IconImages/EditHistory/Triggers/Font added")
 
 # SettingsUI: зависимость PromptUI (поле ввода кода)
 patch_plain("gfp-menu-dep", os.path.join(root, "submodules/SettingsUI/BUILD"),
@@ -383,7 +383,7 @@ patch("gfp-deleted-bubble",
       r'    if AyuDeleted.contains(message.id) {\n'
       r'        return "🗑 " + ayuBase\n'
       r'    }\n'
-      r'    if !AyuEditHistory.history(id: message.id).isEmpty {\n'
+      r'    if AyuEditHistory.isEdited(id: message.id, text: message.text) {\n'
       r'        return "✏️ " + ayuBase\n'
       r'    }\n'
       r'    return ayuBase\n'
@@ -442,8 +442,7 @@ else:
 # Меню сообщения: «Показать оригинал» (история правок), «ID сообщения», «Выдать значок #»
 CTX_MENU = r"""
         if let ayuMessage = messages.first {
-            let ayuHistory = AyuEditHistory.history(id: ayuMessage.id)
-            if !ayuHistory.isEmpty {
+            if AyuEditHistory.isEdited(id: ayuMessage.id, text: ayuMessage.text) {
                 actions.append(.action(ContextMenuActionItem(text: "Показать оригинал", icon: { _ in return nil }, action: { _, f in
                     f(.default)
                     var ayuEditDate: Int32? = nil
@@ -649,7 +648,28 @@ def _insert_verified_footer():
     print(f"MISSING {label}: anchor not found")
 _insert_verified_footer()
 
-# Оформление: вместо сетки иконок — кнопка «Изменить иконку» (открывает окно иконок GFPGRAM)
+# Оформление: вместо сетки иконок — кнопка «Иконка приложения» (открывает окно иконок GFPGRAM)
+def _balanced_end(src, open_idx):
+    """Индекс сразу после ')', парной для '(' в open_idx (строки в кавычках пропускаем)."""
+    depth, i, in_str = 0, open_idx, False
+    while i < len(src):
+        ch = src[i]
+        if in_str:
+            if ch == "\\":
+                i += 1
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return -1
+
 def _appearance_icon_button():
     label = "gfp-appearance-icons"
     if label in disabled:
@@ -658,24 +678,80 @@ def _appearance_icon_button():
         if os.path.basename(p) != "ThemeSettingsController.swift":
             continue
         src = read(p)
-        item_re = re.compile(r"return ThemeSettingsAppIconItem\((?:(?!\n        case ).)*?updated: \{ icon in\n\s*arguments\.selectAppIcon\(icon\)\n\s*\}\)", re.S)
-        sel_re = re.compile(r"selectAppIcon: \{ icon in\n")
-        m_sel = sel_re.search(src)
-        push_decl = src.find("var pushControllerImpl")
-        if not (item_re.search(src) and m_sel and 0 <= push_decl < m_sel.start() and "func item(presentationData: ItemListPresentationData, arguments: Any)" in src):
-            print(f"MISSING {label}: структура ThemeSettingsController.swift не совпала, сетка иконок осталась как есть")
+        if "gfpram.open" in src:
             return
-        button = ('return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: nil, title: "Изменить иконку", label: "", labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {\n'
+        m_item = re.search(r"return\s+ThemeSettingsAppIconItem\(", src)
+        if not m_item:
+            print(f"MISSING {label}: в ThemeSettingsController.swift нет 'return ThemeSettingsAppIconItem(', сетка осталась"); return
+        item_end = _balanced_end(src, m_item.end() - 1)
+        if item_end < 0:
+            print(f"MISSING {label}: не удалось найти конец ThemeSettingsAppIconItem(...)"); return
+        old_call = src[m_item.start():item_end]
+        m_style = re.search(r"systemStyle:\s*([^,\n]+),", old_call)
+        style_arg = ("systemStyle: " + m_style.group(1).strip() + ", ") if m_style else ""
+        m_sel = re.search(r"selectAppIcon:\s*\{\s*(\w+)\s+in\b[^\n]*\n", src)
+        if not m_sel:
+            print(f"MISSING {label}: не найден closure 'selectAppIcon: {{ icon in', сетка осталась"); return
+        push_name = None
+        for m_push in re.finditer(r"var\s+(\w+)\s*:\s*\(\(ViewController\)\s*->\s*Void\)\?", src[:m_sel.start()]):
+            push_name = m_push.group(1)
+            if "push" in push_name.lower():
+                break
+        if not push_name:
+            print(f"MISSING {label}: не найдена переменная push-замыкания перед selectAppIcon, сетка осталась"); return
+        icon_var = m_sel.group(1)
+        button = ('return ItemListDisclosureItem(presentationData: presentationData, ' + style_arg + 'icon: nil, title: "Иконка приложения", label: "", labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {\n'
                   '                arguments.selectAppIcon(PresentationAppIcon(name: "gfpram.open", imageName: "gfpram.open"))\n'
                   '            })')
-        src = item_re.sub(lambda m: button, src, count=1)
-        src = sel_re.sub(lambda m: m.group(0) + '            if icon.name == "gfpram.open" {\n                pushControllerImpl?(gfpramIconsController(context: context))\n                return\n            }\n', src, count=1)
+        hook = ('            if ' + icon_var + '.name == "gfpram.open" {\n'
+                '                ' + push_name + '?(gfpramIconsController(context: context))\n'
+                '                return\n'
+                '            }\n')
+        # правим с конца файла к началу, чтобы индексы не поехали (порядок closure и item() зависит от версии)
+        edits = sorted([(m_sel.end(), m_sel.end(), hook), (m_item.start(), item_end, button)], key=lambda e: e[0], reverse=True)
+        for start, end, text in edits:
+            src = src[:start] + text + src[end:]
         write(p, src)
         hits_by_label[label] = hits_by_label.get(label, 0) + 1
         print(f"OK   {label}: кнопка вместо сетки в {os.path.relpath(p, root)}")
         return
     print(f"MISSING {label}: ThemeSettingsController.swift not found")
 _appearance_icon_button()
+
+# Шрифт всего интерфейса: Font.regular/medium/... в модуле Display берут выбранное семейство из AyuFont
+def _font_patch():
+    label = "gfp-font"
+    if label in disabled:
+        print(f"SKIP {label}: disabled"); return
+    display_src = os.path.join(root, "submodules/Display/Source")
+    for p in walk(display_src):
+        if os.path.basename(p) != "Font.swift":
+            continue
+        src = read(p)
+        if "AyuFont." in src:
+            return
+        shutil.copy(os.path.join(here, "AyuFont.swift"), os.path.join(display_src, "AyuFont.swift"))
+        table = {"regular": (".regular", "false"), "light": (".light", "false"), "medium": (".medium", "false"),
+                 "semibold": (".semibold", "false"), "bold": (".bold", "false"), "heavy": (".heavy", "false"),
+                 "italic": (".regular", "true"), "semiboldItalic": (".semibold", "true")}
+        total = 0
+        for name, (weight, italic) in table.items():
+            pat = r"(public static func " + name + r"\(_ size: CGFloat\) -> UIFont \{\n)"
+            rep = r"\1        if let ayuFont = AyuFont.font(size: size, weight: " + weight + ", italic: " + italic + ") { return ayuFont }\n"
+            src, n = re.subn(pat, rep, src, count=1)
+            total += n
+        src, n_with = re.subn(r"(public static func with\(size: CGFloat, design: Design = \.regular, weight: Weight = \.regular, traits: Traits = \[\]\) -> UIFont \{\n)",
+                              r"\1        if design == .regular, traits.isEmpty, let ayuFont = AyuFont.font(size: size, weight: AyuFont.weight(String(describing: weight))) { return ayuFont }\n", src, count=1)
+        total += n_with
+        if total == 0:
+            os.remove(os.path.join(display_src, "AyuFont.swift"))
+            print(f"MISSING {label}: в Font.swift не найдены функции Font.regular/... , шрифт не меняется"); return
+        write(p, src)
+        hits_by_label[label] = total
+        print(f"OK   {label}: {total} функций Font.* в {os.path.relpath(p, root)} (with: {n_with})")
+        return
+    print(f"MISSING {label}: Font.swift not found")
+_font_patch()
 
 # Фоновые функции Premium (заглушка при упоминании, бэкап): запускаются при открытии списка чатов
 patch("gfp-premium-start",
@@ -715,112 +791,6 @@ def _split_top(s):
             cur += ch
     if cur.strip(): parts.append(cur.strip())
     return parts
-
-def check_cloud():
-    """Возвращает (Swift-выражение для location, причина провала)."""
-    loc_case, fn_ok, res_ok = None, False, False
-    for p, src in _all_core_sources():
-        if loc_case is None:
-            m = re.search(r"enum\s+SearchMessagesLocation\b[^{]*\{(.*?)^\}", src, re.S | re.M)
-            if m:
-                c = re.search(r"^\s*case\s+peer\((.*)\)\s*$", m.group(1), re.M)
-                if c:
-                    loc_case = c.group(1)
-        if not fn_ok and "TelegramEngine" in p:
-            for params, tail in _balanced_params(src, "searchMessages"):
-                labels = [x.split(":")[0].strip() for x in params]
-                if all(l in labels for l in ("location", "query", "state")) and all(("=" in x) or x.split(":")[0].strip() in ("location", "query", "state") for x in params) and "SearchMessagesResult" in tail:
-                    fn_ok = True
-                    break
-        if not res_ok and re.search(r"struct\s+SearchMessagesResult\b", src) and re.search(r"(let|var)\s+messages:\s*\[Message\]", src):
-            res_ok = True
-    if loc_case is None:
-        return None, "не найден SearchMessagesLocation.case peer(...)"
-    if not fn_ok:
-        return None, "не найден TelegramEngine.Messages.searchMessages(location:query:state:) -> Signal<(SearchMessagesResult, ...)>"
-    if not res_ok:
-        return None, "у SearchMessagesResult нет messages: [Message]"
-    args = []
-    for item in _split_top(loc_case):
-        label, typ = [x.strip() for x in item.split(":", 1)]
-        if label == "peerId":
-            args.append("peerId: account.peerId")
-        elif typ.endswith("?"):
-            args.append(f"{label}: nil")
-        else:
-            return None, f"не знаю значение для параметра {item} в SearchMessagesLocation.peer"
-    return ".peer(" + ", ".join(args) + ")", None
-
-if "gfp-cloud" in disabled:
-    print("SKIP gfp-cloud: disabled (ставлю заглушку)")
-    shutil.copy(os.path.join(here, "AyuCloudStub.swift"), os.path.join(core, "AyuCloud.swift"))
-else:
-    _loc, _why = check_cloud()
-    if _loc:
-        _tpl = read(os.path.join(here, "AyuCloud.swift")).replace("__LOCATION__", _loc)
-        write(os.path.join(core, "AyuCloud.swift"), _tpl)
-        print(f"OK   gfp-cloud: облачная копия в Избранном, location = {_loc}")
-    else:
-        shutil.copy(os.path.join(here, "AyuCloudStub.swift"), os.path.join(core, "AyuCloud.swift"))
-        print(f"::warning::gfp-cloud: облачная копия Premium отключена (заглушка): {_why}. Локальные копии работают.")
-
-# ======================= Авто-реакция (Premium) =======================
-# Метод установки реакции в Telegram-iOS меняет имя и параметры. Ищем реальную сигнатуру в чекауте и подставляем
-# вызов вместо __AYU_REACT__ в AyuPremium.swift. Если сигнал не запустить (.start()), реакция просто не отправится.
-def check_react():
-    """Возвращает (Swift-вызов, причина провала)."""
-    reaction_ok = False
-    cands = []
-    for p, src in _all_core_sources():
-        if not reaction_ok:
-            m = re.search(r"enum\s+UpdateMessageReaction\b[^{]*\{(.*?)^\}", src, re.S | re.M)
-            if m and re.search(r"case\s+builtin\(\s*(?:value:\s*)?String\s*\)", m.group(1)):
-                reaction_ok = True
-        if "TelegramEngine" in p:
-            for name in ("setMessageReactions", "updateMessageReactionsInteractively"):
-                for params, tail in _balanced_params(src, name):
-                    cands.append((name, params, tail.split("{")[0]))
-    if not reaction_ok:
-        return None, "не найден enum UpdateMessageReaction с case builtin(String)"
-    if not cands:
-        return None, "не найден TelegramEngine.Messages.setMessageReactions / updateMessageReactionsInteractively"
-    why = []
-    for name, params, tail in sorted(cands, key=lambda c: c[0] != "setMessageReactions"):
-        args, bad = [], None
-        for item in params:
-            head = item.split(":")[0].split()
-            label = head[0] if head else ""
-            inner = head[-1] if head else ""
-            if inner in ("ids", "messageIds"): value = "[ayuMessageId]"
-            elif inner in ("id", "messageId"): value = "ayuMessageId"
-            elif inner == "reactions": value = "[.builtin(ayuEmoji)]"
-            elif inner in ("isLarge", "storeAsRecentlyUsed", "add"): value = "false"
-            elif "=" in item: continue
-            else: bad = item; break
-            args.append(value if label == "_" else f"{label}: {value}")
-        if bad:
-            why.append(f"{name}: не знаю значение для параметра {bad}")
-            continue
-        call = f"ayuEngine.messages.{name}(" + ", ".join(args) + ")"
-        if "Signal" in tail:
-            call = "let _ = " + call + ".start()"
-        else:
-            call = "let _ = " + call
-        return call, None
-    return None, "; ".join(why)
-
-_ayu_prem = os.path.join(core, "AyuPremium.swift")
-_ayu_src = read(_ayu_prem)
-if "gfp-react" in disabled:
-    _call, _why = None, "disabled"
-else:
-    _call, _why = check_react()
-if _call:
-    write(_ayu_prem, _ayu_src.replace("__AYU_REACT__", _call))
-    print(f"OK   gfp-react: авто-реакция, вызов: {_call}")
-else:
-    write(_ayu_prem, _ayu_src.replace("__AYU_REACT__", "_ = ayuEngine; _ = ayuMessageId; _ = ayuEmoji"))
-    print(f"::warning::gfp-react: авто-реакция отключена (заглушка): {_why}")
 
 def check_gifts():
     """Проверяет API профильных подарков и папок. Возвращает список причин провала (пусто = всё ок)."""
@@ -932,8 +902,7 @@ def adapt_text_content():
             d = _default_for(item)
             if d is None: print(f"::error::не знаю значение по умолчанию для {item} в case text({case_line})"); sys.exit(1)
             extra.append(d)
-    targets = [os.path.join(core, "AyuPremium.swift"), os.path.join(core, "AyuCloud.swift"),
-               os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"),
+    targets = [os.path.join(core, "AyuPremium.swift"), os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"),
                os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift")]
     for t in targets:
         if not os.path.exists(t): continue
@@ -955,61 +924,6 @@ def adapt_text_content():
             write(t, out); print(f"OK   .text(...) +{', '.join(extra)}: {n} в {os.path.relpath(t, root)}")
 
 adapt_text_content()
-
-# ---------- Диагностика ListViewItem (для ошибок компиляции GfpramPremiumUI.swift) ----------
-# В логе сборки печатаем реальные определения из чекаута: протокол ListViewItem и init у ListViewItemNode.
-def _print_listview_api():
-    seen_proto = seen_init = False
-    for p in walk(os.path.join(root, "submodules/Display")):
-        try: src = read(p)
-        except Exception: continue
-        if not seen_proto:
-            m = re.search(r"public protocol ListViewItem\b[^{]*\{(.*?)^\}", src, re.S | re.M)
-            if m:
-                seen_proto = True
-                print("INFO listview-protocol file: " + os.path.relpath(p, root))
-                for line in m.group(1).split("\n"):
-                    if line.strip(): print("INFO listview-protocol: " + line.strip()[:260])
-        if not seen_init and re.search(r"class\s+ListViewItemNode\b", src):
-            for m in re.finditer(r"^\s*(?:public\s+)?(?:required\s+)?(?:convenience\s+)?init\([^{]*", src, re.M):
-                seen_init = True
-                print("INFO listview-node-init: " + " ".join(m.group(0).split())[:260])
-        if seen_proto and seen_init: break
-    if not seen_proto: print("INFO listview-protocol: не найден")
-_print_listview_api()
-
-# Новые версии Telegram-iOS заменили previousItem/nextItem на neighbors: ... в ListViewItem.
-# Смотрим протокол в чекауте и подгоняем сигнатуры GfpramPremiumHeaderItem.
-def _adapt_listview_item():
-    proto = None
-    for p in walk(os.path.join(root, "submodules/Display")):
-        try: src = read(p)
-        except Exception: continue
-        m = re.search(r"public protocol ListViewItem\b[^{]*\{(.*?)^\}", src, re.S | re.M)
-        if m:
-            proto = m.group(1); break
-    target = os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumUI.swift")
-    if proto is None or not os.path.exists(target):
-        print("::warning::gfp-listview: не нашёл протокол ListViewItem или GfpramPremiumUI.swift, сигнатуры не трогаю"); return
-    src = read(target)
-    old_pair = "previousItem: ListViewItem?, nextItem: ListViewItem?"
-    for fn in ("nodeConfiguredForParams", "updateNode"):
-        typ = None
-        k = proto.find("func " + fn + "(")
-        if k >= 0:
-            nxt = proto.find("func ", k + 5)
-            m = re.search(r"\bneighbors\s*:\s*([A-Za-z_][\w.]*)", proto[k:nxt if nxt > 0 else len(proto)])
-            if m: typ = m.group(1)
-        if not typ:
-            continue
-        i = src.find("func " + fn + "(")
-        j = src.find(old_pair, i) if i >= 0 else -1
-        if j < 0 or src.find("\n", i) < j:
-            print(f"::warning::gfp-listview: {fn}: не нашёл previousItem/nextItem в GfpramPremiumUI.swift"); continue
-        src = src[:j] + "neighbors: " + typ + src[j + len(old_pair):]
-        print(f"OK   gfp-listview: {fn}(... neighbors: {typ} ...)")
-    write(target, src)
-_adapt_listview_item()
 
 # ======================= Итог =======================
 bad = [l for l in CRITICAL if l not in disabled and hits_by_label.get(l, 0) == 0]

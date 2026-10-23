@@ -4,7 +4,7 @@ import UIKit
 /// Запоминает выбранную иконку приложения и возвращает её после обновления/переустановки.
 /// iOS сам хранит имя альтернативной иконки, но при перепаковке приложения (Sideloadly) сбрасывает её на основную.
 /// Выбор лежит в UserDefaults с префиксом «ayu.»: он автоматически попадает в файл и связку ключей (AyuPersist)
-/// и в облачную копию в «Избранном» (AyuCloud).
+
 public enum AyuIconKeeper {
     private static let nameKey = "ayu.appIcon"
     private static let premiumKey = "ayu.appIconPremium"
@@ -25,7 +25,6 @@ public enum AyuIconKeeper {
         defaults.set(name ?? "main", forKey: nameKey)
         defaults.set(premium, forKey: premiumKey)
         AyuPersist.schedule()
-        AyuCloud.scheduleBackup()
     }
 
     /// Значение из облачной копии: берём, только если локально ничего не запомнено.
@@ -65,7 +64,7 @@ public enum AyuIconKeeper {
             return
         }
         // Premium-иконка без активной подписки не возвращается
-        if rememberedPremium && !AyuPremium.isActive {
+        if rememberedPremium && !AyuPremium.isActiveAnywhere {
             return
         }
         let target: String? = saved == "main" ? nil : saved
