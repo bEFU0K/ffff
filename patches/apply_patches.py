@@ -301,6 +301,41 @@ for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift
     shutil.copy(os.path.join(here, _extra), os.path.join(root, "submodules/SettingsUI/Sources/" + _extra))
 print("OK   GfpramSettingsController/PremiumController/PremiumUI/Assets/Icons/IconImages/EditHistory/Triggers/Font added")
 
+# Автоподстройка GfpramPremiumUI.swift под реальный API Display из этого чекаута
+def _adapt_premium_ui():
+    target = os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumUI.swift")
+    src = read(target)
+    node_sig = None
+    proto = None
+    for _p in walk(os.path.join(root, "submodules/Display/Source")):
+        t = read(_p)
+        if node_sig is None and re.search(r"class\s+ListViewItemNode\b", t):
+            m = re.search(r"\binit\s*\(\s*layerBacked[^)]*\)", t)
+            if m:
+                node_sig = m.group(0)
+        if proto is None and re.search(r"protocol\s+ListViewItem\b", t):
+            i = t.find("protocol ListViewItem")
+            proto = t[i:i + 4000]
+        if node_sig and proto:
+            break
+    if node_sig:
+        print("INFO ListViewItemNode: " + re.sub(r"\s+", " ", node_sig))
+        if "dynamicBounce" not in node_sig:
+            src = src.replace("super.init(layerBacked: false, dynamicBounce: false)", "super.init(layerBacked: false)")
+            print("OK   gfp-premiumui: dynamicBounce убран (в этом Telegram-iOS такого аргумента нет)")
+    else:
+        print("::warning::gfp-premiumui: не нашёл init ListViewItemNode, оставляю как есть")
+    if proto:
+        # Диагностика: реальные требования протокола — видно в логе, если снова не сойдётся
+        for _line in proto.split("\n"):
+            _t = _line.strip()
+            if _t.startswith("}") and not _t.startswith("})"):
+                break
+            if _t.startswith(("func ", "var ", "static ", "associatedtype ", "init")):
+                print("INFO ListViewItem: " + _t[:260])
+    write(target, src)
+_adapt_premium_ui()
+
 # SettingsUI: зависимость PromptUI (поле ввода кода)
 patch_plain("gfp-menu-dep", os.path.join(root, "submodules/SettingsUI/BUILD"),
       r'(        "//submodules/OverlayStatusController:OverlayStatusController",\n)',
@@ -670,6 +705,18 @@ def _balanced_end(src, open_idx):
         i += 1
     return -1
 
+def _split_top(s):
+    parts, d, cur = [], 0, ""
+    for ch in s:
+        if ch in "([<": d += 1
+        elif ch in ")]>": d -= 1
+        if ch == "," and d == 0:
+            parts.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+    if cur.strip(): parts.append(cur.strip())
+    return parts
+
 def _appearance_icon_button():
     label = "gfp-appearance-icons"
     if label in disabled:
@@ -700,7 +747,17 @@ def _appearance_icon_button():
         if not push_name:
             print(f"MISSING {label}: не найдена переменная push-замыкания перед selectAppIcon, сетка осталась"); return
         icon_var = m_sel.group(1)
-        button = ('return ItemListDisclosureItem(presentationData: presentationData, ' + style_arg + 'icon: nil, title: "Иконка приложения", label: "", labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {\n'
+        # привязки из `case let .icon(...)` теперь не используются -> warning=error; гасим через `_ = x`
+        keep = ""
+        _pre = src[:m_item.start()]
+        _mc = None
+        for _mc in re.finditer(r"case\s+let\s+\.\w+\(([^\n]*)\)\s*:", _pre):
+            pass
+        if _mc:
+            for _part in _split_top(_mc.group(1)):
+                if re.fullmatch(r"[A-Za-z]\w*", _part):
+                    keep += "            _ = " + _part + "\n"
+        button = (keep + 'return ItemListDisclosureItem(presentationData: presentationData, ' + style_arg + 'icon: nil, title: "Иконка приложения", label: "", labelStyle: .text, sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: {\n'
                   '                arguments.selectAppIcon(PresentationAppIcon(name: "gfpram.open", imageName: "gfpram.open"))\n'
                   '            })')
         hook = ('            if ' + icon_var + '.name == "gfpram.open" {\n'
