@@ -126,8 +126,9 @@ private func gfpramPremiumEntries() -> [GfpramEntry] {
     entries.append(.action(202, "Автоответчик: тексты и режимы", "", 50))
     entries.append(.action(203, "Слова-триггеры и ответы", AyuPremiumService.triggers.isEmpty ? "не заданы" : String(AyuPremiumService.triggers.count) + " из " + String(AyuPremiumService.maxTriggers), 17))
     entries.append(.action(205, "Реакция", AyuPremiumService.reactEmoji, 16))
+    entries.append(.toggle(208, "Реакция только когда я не в сети или ночью", "reactAway", AyuSettings.value("reactAway")))
     entries.append(.action(206, "Бэкапы аккаунтов", String(AyuBackup.entries().count), 12))
-    entries.append(.footer(207, "Premium, тексты и слова у каждого аккаунта свои. Автоответы и копии работают только пока приложение запущено. Автоответ не отправляется ботам. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS; сам вход (сессию) он не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
+    entries.append(.footer(207, "Premium, тексты и слова у каждого аккаунта свои. Автоответы, слова и реакции работают, пока приложение запущено (iOS усыпляет свёрнутое приложение через несколько секунд). Автоответ не отправляется ботам. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS; сам вход (сессию) он не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
 
     entries.append(.header(300, "ПОДДЕРЖКА"))
     entries.append(.iconAction(301, "Тех-поддержка", "@" + AyuPremium.supportUsername, 20, 101))
@@ -159,7 +160,9 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
     }
 
     let arguments = GfpramArguments(
-        toggle: { _, _ in
+        toggle: { key, value in
+            AyuSettings.set(key, value)
+            refresh.set(true)
         },
         perform: { kind in
             if let key = gfpramToggleKey(kind) {
@@ -273,6 +276,7 @@ public func gfpramPremiumController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     pushImpl = { [weak controller] c in
         controller?.push(c)
     }
@@ -288,7 +292,7 @@ private func gfpramAutoReplyEntries() -> [GfpramEntry] {
     var entries: [GfpramEntry] = []
     entries.append(.header(0, "АВТООТВЕТЧИК"))
     entries.append(.toggle(1, "Включить автоответчик", "premiumDmReply", AyuSettings.value("premiumDmReply")))
-    entries.append(.footer(2, "Отвечает на личные сообщения. Ботам и служебным чатам не отвечает. Работает, пока приложение запущено."))
+    entries.append(.footer(2, "Отвечает на личные сообщения, когда вы не в сети (или ночью / в режиме «Занят»). Ботам и служебным чатам не отвечает. Работает, пока приложение запущено; слово-триггер в этом чате главнее автоответа."))
 
     entries.append(.header(100, "КОГДА Я НЕ В СЕТИ"))
     entries.append(.toggle(101, "Отвечать, когда я не в сети", "arOffline", AyuSettings.value("arOffline")))
@@ -406,6 +410,7 @@ public func gfpramAutoReplyController(context: AccountContext) -> ViewController
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }
@@ -553,6 +558,7 @@ public func gfpramSpamController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     controller.willDisappear = { _ in
         state.running = false
         state.generation += 1
@@ -633,6 +639,7 @@ public func gfpramBackupController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }

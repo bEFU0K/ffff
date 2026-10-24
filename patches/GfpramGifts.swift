@@ -116,6 +116,7 @@ public func gfpramGiftsController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     pushImpl = { [weak controller] c in
         controller?.push(c)
     }
@@ -228,6 +229,7 @@ private func gfpramGiftsFoldersController(context: AccountContext, gifts: [Profi
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }

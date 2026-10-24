@@ -66,7 +66,10 @@ enum GfpramEntry: ItemListNodeEntry {
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
         let arguments = arguments as! GfpramArguments
         switch self {
-        case let .hero(_, title, text):
+        case let .hero(heroId, title, text):
+            if heroId == -2 {
+                return GfpramPremiumHeaderItem(theme: presentationData.theme, title: title, text: text, icon: .image(gfpramPremiumImage()), locked: false, sectionId: self.section)
+            }
             return GfpramPremiumHeaderItem(theme: presentationData.theme, title: title, text: text, icon: .carousel(gfpramPremiumIconKeys), locked: !AyuPremium.isActive, sectionId: self.section)
         case let .header(_, text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
@@ -119,6 +122,7 @@ private func gfpramEntries(adminUnlocked: Bool, ownId: Int64, ownPhone: String?,
     }
     entries.append(.header(base, "ПРИЛОЖЕНИЕ"))
     entries.append(.action(base + 1, "Иконка приложения", "", 0))
+    entries.append(.action(base + 6, "Фон клиента", GfpramBackground.kindTitle, 30))
     entries.append(.action(base + 4, "Шрифт приложения", AyuSettings.fontFamily.isEmpty ? "Системный" : AyuSettings.fontFamily, 6))
     entries.append(.action(base + 5, "Подарки: добавить все в коллекцию", "", 5))
     entries.append(.action(base + 2, "О GFPGRAM", AyuSettings.version, 1))
@@ -147,16 +151,10 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
                 pushImpl?(gfpramGiftsController(context: context))
             case 6:
                 pushImpl?(gfpramFontController(context: context))
+            case 30:
+                pushImpl?(gfpramBackgroundController(context: context))
             case 1:
-                presentImpl?(promptController(context: context, text: "Введите ключ", value: nil, placeholder: "", apply: { value in
-                    guard let value = value else {
-                        return
-                    }
-                    if AyuSettings.verifyAdminCode(value) {
-                        refresh.set(true)
-                        pushImpl?(gfpramAdminController(context: context))
-                    }
-                }))
+                pushImpl?(gfpramAboutController(context: context))
             case 2:
                 pushImpl?(gfpramAdminController(context: context))
             case 3:
@@ -193,6 +191,7 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     pushImpl = { [weak controller] c in
         controller?.push(c)
     }
@@ -334,6 +333,7 @@ public func gfpramAdminController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }

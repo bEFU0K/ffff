@@ -52,6 +52,7 @@ public func gfpramFontController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }

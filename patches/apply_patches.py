@@ -297,9 +297,40 @@ shutil.copy(os.path.join(here, "GfpramSettingsController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramSettingsController.swift"))
 shutil.copy(os.path.join(here, "GfpramPremiumController.swift"),
             os.path.join(root, "submodules/SettingsUI/Sources/GfpramPremiumController.swift"))
-for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift", "GfpramIconImages.swift", "GfpramEditHistory.swift", "GfpramTriggers.swift", "GfpramFont.swift"):
+for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift", "GfpramIconImages.swift", "GfpramEditHistory.swift", "GfpramTriggers.swift", "GfpramFont.swift", "GfpramAbout.swift", "GfpramMotionLists.swift", "GfpramBackgroundController.swift"):
     shutil.copy(os.path.join(here, _extra), os.path.join(root, "submodules/SettingsUI/Sources/" + _extra))
 print("OK   GfpramSettingsController/PremiumController/PremiumUI/Assets/Icons/IconImages/EditHistory/Triggers/Font added")
+
+# Яркие акценты темы по умолчанию (меняется только число; нет констант в чекауте — просто MISSING в логе)
+patch("gfp-accent-day", r"(public let defaultDayAccentColor\s*=\s*)0x[0-9a-fA-F]+", r"\g<1>0x7a5cff",
+      base=os.path.join(root, "submodules/TelegramPresentationData"))
+patch("gfp-accent-night", r"(public let defaultNightAccentColor\s*=\s*)0x[0-9a-fA-F]+", r"\g<1>0x9b7bff",
+      base=os.path.join(root, "submodules/TelegramPresentationData"))
+
+# Плавность: файл с нажатиями живёт в Display (его видят и ChatListUI, и SettingsUI)
+def _motion_setup():
+    _disp = os.path.join(root, "submodules/Display/Source")
+    if os.path.isdir(_disp):
+        shutil.copy(os.path.join(here, "GfpramMotion.swift"), os.path.join(_disp, "GfpramMotion.swift"))
+        shutil.copy(os.path.join(here, "GfpramBackground.swift"), os.path.join(_disp, "GfpramBackground.swift"))
+        shutil.copy(os.path.join(here, "GfpramSkin.swift"), os.path.join(_disp, "GfpramSkin.swift"))
+        print("OK   GfpramMotion.swift added to Display")
+    else:
+        print("MISSING gfp-motion: Display/Source не найден или отключён, плавность не добавлена")
+    # волна появления строк нужна ItemListController.forEachItemNode; если его нет в чекауте — вырезаем тело
+    _has = False
+    for _p in walk(os.path.join(root, "submodules/ItemListUI")):
+        if os.path.basename(_p) == "ItemListController.swift" and "func forEachItemNode" in read(_p):
+            _has = True
+    if not _has:
+        _t = os.path.join(root, "submodules/SettingsUI/Sources/GfpramMotionLists.swift")
+        _src = read(_t)
+        _src = re.sub(r"    //GFP_STAGGER_BEGIN.*?//GFP_STAGGER_END\n", "", _src, flags=re.S)
+        write(_t, _src)
+        print("MISSING gfp-stagger: ItemListController.forEachItemNode не найден, волна появления отключена")
+    else:
+        print("OK   gfp-stagger: волна появления включена")
+_motion_setup()
 
 # Автоподстройка GfpramPremiumUI.swift под реальный API Display из этого чекаута
 def _adapt_premium_ui():
@@ -673,6 +704,15 @@ def _comment_item_usable():
         return all("=" in x for x in params[2:])
     return False
 
+def _labeled_item_has_multiline():
+    """Есть ли в PeerInfoScreenLabeledValueItem параметр textBehavior (многострочный текст), иначе строка остаётся однострочной."""
+    for p in walk(PEER_INFO):
+        if os.path.basename(p) != "PeerInfoScreenLabeledValueItem.swift":
+            continue
+        src = read(p)
+        return "textBehavior:" in src and "multiLine" in src
+    return False
+
 def _insert_verified_footer():
     label = "gfp-profile-verified"
     if label in disabled:
@@ -701,7 +741,9 @@ def _insert_verified_footer():
                 hits_by_label[label] = hits_by_label.get(label, 0) + 1
                 print(f"OK   {label}: footer (PeerInfoScreenCommentItem) in {os.path.relpath(p, root)}")
                 return
-        block = verified_if + '            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3102, label: "GFPGRAM", text: ayuVerified, textColor: .primary, action: nil, requestLayout: { _ in }))\n        }\n'
+        multiline = "textBehavior: .multiLine(maxLines: 4, enabledEntities: []), " if _labeled_item_has_multiline() else ""
+        badges_row = '            if let ayuBadges = AyuVerified.badges(id: user.id.id._internalGetInt64Value(), username: user.username) {\n                items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3103, label: "значки", text: ayuBadges, textColor: .primary, ' + multiline + 'action: nil, requestLayout: { _ in }))\n            }\n'
+        block = verified_if + '            items[currentPeerInfoSection]!.append(PeerInfoScreenLabeledValueItem(id: 3102, label: "GFPGRAM", text: ayuVerified, textColor: .primary, ' + multiline + 'action: nil, requestLayout: { _ in }))\n' + badges_row + '        }\n'
         write(p, src[:anchor] + block + src[anchor:])
         hits_by_label[label] = hits_by_label.get(label, 0) + 1
         print(f"OK   {label}: row fallback (CommentItem не подошёл) in {os.path.relpath(p, root)}")
@@ -841,6 +883,13 @@ patch("gfp-premium-start",
       r"(    override public func loadDisplayNode\(\) \{\n)",
       r"\1        AyuPremiumService.start(account: self.context.account)\n",
       base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListController.swift")
+
+# Плавность и фон клиента включаются вместе с запуском списка чатов (файлы лежат в Display)
+if os.path.exists(os.path.join(root, "submodules/Display/Source/GfpramMotion.swift")):
+    patch("gfp-motion-start",
+          r"(    override public func loadDisplayNode\(\) \{\n)",
+          r"\1        GfpramMotion.install()\n",
+          base=os.path.join(root, "submodules/ChatListUI"), filename="ChatListController.swift")
 
 # ======================= Облачная копия Premium/иконки и массовое добавление подарков =======================
 # Оба блока зависят от внутреннего API Telegram-iOS, который меняется. Поэтому перед копированием настоящих файлов

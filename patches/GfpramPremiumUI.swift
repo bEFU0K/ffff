@@ -24,14 +24,31 @@ public func gfpramPremiumImage() -> UIImage? {
 
 private func gfpramTileIcon(symbol: String, color: UIColor) -> UIImage {
     let size = CGSize(width: 30.0, height: 30.0)
+    var hue: CGFloat = 0.0
+    var saturation: CGFloat = 0.0
+    var brightness: CGFloat = 0.0
+    var alpha: CGFloat = 0.0
+    color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+    // Градиентная плитка: светлее сверху-слева, чуть темнее и со сдвигом оттенка снизу-справа
+    let top = UIColor(hue: hue, saturation: max(0.0, saturation * 0.72), brightness: min(1.0, brightness * 1.1 + 0.07), alpha: 1.0)
+    let bottom = UIColor(hue: (hue + 0.05).truncatingRemainder(dividingBy: 1.0), saturation: min(1.0, saturation * 1.05), brightness: brightness * 0.86, alpha: 1.0)
     let renderer = UIGraphicsImageRenderer(size: size)
-    return renderer.image { _ in
-        color.setFill()
-        UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: 7.0).fill()
+    return renderer.image { context in
+        let rect = CGRect(origin: CGPoint(), size: size)
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: 8.0)
+        context.cgContext.saveGState()
+        context.cgContext.addPath(path.cgPath)
+        context.cgContext.clip()
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [top.cgColor, bottom.cgColor] as CFArray, locations: [0.0, 1.0]) {
+            context.cgContext.drawLinearGradient(gradient, start: CGPoint(), end: CGPoint(x: size.width, y: size.height), options: [])
+        }
+        UIColor(white: 1.0, alpha: 0.12).setFill()
+        UIBezierPath(rect: CGRect(x: 0.0, y: 0.0, width: size.width, height: size.height * 0.45)).fill()
+        context.cgContext.restoreGState()
         let configuration = UIImage.SymbolConfiguration(pointSize: 16.0, weight: .semibold)
         if let glyph = UIImage(systemName: symbol, withConfiguration: configuration)?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-            let rect = CGRect(x: (size.width - glyph.size.width) / 2.0, y: (size.height - glyph.size.height) / 2.0, width: glyph.size.width, height: glyph.size.height)
-            glyph.draw(in: rect)
+            let glyphRect = CGRect(x: (size.width - glyph.size.width) / 2.0, y: (size.height - glyph.size.height) / 2.0, width: glyph.size.width, height: glyph.size.height)
+            glyph.draw(in: glyphRect)
         }
     }
 }
@@ -171,6 +188,7 @@ final class GfpramPremiumHeaderItemNode: ListViewItemNode {
     private let textNode = ImmediateTextNode()
     private let imageView = UIImageView()
     private let carouselView = GfpramIconCarouselView(frame: CGRect())
+    private let cardLayer = CAGradientLayer()
 
     private var item: GfpramPremiumHeaderItem?
     private var iconSide: CGFloat = 0.0
@@ -191,8 +209,46 @@ final class GfpramPremiumHeaderItemNode: ListViewItemNode {
     override func didLoad() {
         super.didLoad()
 
+        // Скруглённая градиентная карточка за иконкой и заголовком
+        self.cardLayer.colors = [UIColor(rgb: 0x7b5cff).withAlphaComponent(0.26).cgColor, UIColor(rgb: 0xff5fa2).withAlphaComponent(0.20).cgColor, UIColor(rgb: 0xff9a44).withAlphaComponent(0.16).cgColor]
+        self.cardLayer.startPoint = CGPoint(x: 0.0, y: 0.0)
+        self.cardLayer.endPoint = CGPoint(x: 1.0, y: 1.0)
+        self.cardLayer.cornerRadius = 24.0
+        self.cardLayer.borderWidth = 1.0
+        self.cardLayer.borderColor = UIColor(rgb: 0xb08cff).withAlphaComponent(0.28).cgColor
+        self.view.layer.insertSublayer(self.cardLayer, at: 0)
+        if !UIAccessibility.isReduceMotionEnabled {
+            let shift = CABasicAnimation(keyPath: "endPoint")
+            shift.fromValue = NSValue(cgPoint: CGPoint(x: 1.0, y: 1.0))
+            shift.toValue = NSValue(cgPoint: CGPoint(x: 0.6, y: 1.4))
+            shift.duration = 5.0
+            shift.autoreverses = true
+            shift.repeatCount = .infinity
+            shift.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            self.cardLayer.add(shift, forKey: "gfpShift")
+        }
+
         self.view.addSubview(self.imageView)
         self.view.addSubview(self.carouselView)
+    }
+
+    private func startFloat() {
+        if UIAccessibility.isReduceMotionEnabled {
+            return
+        }
+        for layer in [self.imageView.layer, self.carouselView.layer] {
+            if layer.animation(forKey: "gfpFloat") != nil {
+                continue
+            }
+            let float = CABasicAnimation(keyPath: "transform.translation.y")
+            float.fromValue = -3.0
+            float.toValue = 3.0
+            float.duration = 2.4
+            float.autoreverses = true
+            float.repeatCount = .infinity
+            float.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(float, forKey: "gfpFloat")
+        }
     }
 
     private static func iconSide(for icon: GfpramHeaderIcon) -> CGFloat {
@@ -233,6 +289,7 @@ final class GfpramPremiumHeaderItemNode: ListViewItemNode {
                 }
                 self.item = item
                 self.iconSide = side
+                self.startFloat()
 
                 self.titleNode.attributedText = NSAttributedString(string: item.title, font: Font.semibold(26.0), textColor: item.theme.list.itemPrimaryTextColor, paragraphAlignment: .center)
                 self.textNode.attributedText = NSAttributedString(string: item.text, font: Font.regular(15.0), textColor: item.theme.list.freeTextColor, paragraphAlignment: .center)
@@ -266,6 +323,10 @@ final class GfpramPremiumHeaderItemNode: ListViewItemNode {
                 let textSize = self.textNode.updateLayout(constrained)
 
                 var y = topPadding
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                self.cardLayer.frame = CGRect(x: 16.0 + max(params.leftInset, params.rightInset), y: 4.0, width: max(10.0, params.width - 32.0 - max(params.leftInset, params.rightInset) * 2.0), height: max(10.0, layout.contentSize.height - 12.0))
+                CATransaction.commit()
                 if side > 0.0 {
                     let iconFrame = CGRect(x: floor((params.width - side) / 2.0), y: y, width: side, height: side)
                     self.imageView.frame = iconFrame

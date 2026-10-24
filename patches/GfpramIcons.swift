@@ -317,6 +317,7 @@ public func gfpramIconsController(context: AccountContext) -> ViewController {
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     pushImpl = { [weak controller] c in
         controller?.push(c)
     }

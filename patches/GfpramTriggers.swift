@@ -21,7 +21,8 @@ private func gfpramTriggerEntries() -> [GfpramEntry] {
     var entries: [GfpramEntry] = []
     entries.append(.header(0, "СЛОВА-ТРИГГЕРЫ"))
     entries.append(.toggle(1, "Отвечать на слова", "premiumKeyword", AyuSettings.value("premiumKeyword")))
-    entries.append(.footer(2, "Когда во входящем сообщении есть слово из списка, приложение отвечает на него вашим текстом. Работает в личных чатах и группах, пока приложение запущено. Не чаще раза в минуту на слово и чат. Список отдельный у каждого аккаунта."))
+    entries.append(.toggle(3, "Только когда я не в сети или ночью", "kwAway", AyuSettings.value("kwAway")))
+    entries.append(.footer(4, "Когда во входящем сообщении есть слово из списка, приложение отвечает на него вашим текстом. Работает в личных чатах и группах. «Не в сети» — приложение свёрнуто или экран заблокирован; «ночью» — по часам из автоответчика (ночной режим или «Занят»). Не чаще раза в 30 секунд на слово и чат. Если сработало слово, автоответчик в этом чате молчит. Список отдельный у каждого аккаунта."))
 
     entries.append(.header(100, "СЛОВА: " + String(list.count) + " ИЗ " + String(AyuPremiumService.maxTriggers)))
     for (index, trigger) in list.enumerated() {
@@ -31,7 +32,7 @@ private func gfpramTriggerEntries() -> [GfpramEntry] {
     if list.count < AyuPremiumService.maxTriggers {
         entries.append(.action(150, "Добавить слово", "", 1))
     }
-    entries.append(.footer(151, "Нажмите на слово, чтобы изменить ответ, выбрать чат или удалить его. В ответе работают {имя}, {чат}, {время}, {дата}."))
+    entries.append(.footer(151, "В одном слове можно несколько вариантов через запятую: цена, прайс, сколько стоит. Нажмите на слово, чтобы изменить ответ, выбрать чат или удалить его. В ответе работают {имя}, {чат}, {время}, {дата}."))
 
     if !list.isEmpty {
         entries.append(.header(300, "СБРОС"))
@@ -65,21 +66,20 @@ public func gfpramTriggersController(context: AccountContext) -> ViewController 
                     presentImpl?(gfpramAlert(context: context, title: nil, text: "Можно не больше \(AyuPremiumService.maxTriggers) слов"))
                     return
                 }
-                presentImpl?(promptController(context: context, text: "Слово-триггер (ищется в входящих сообщениях)", value: nil, placeholder: "", apply: { word in
+                presentImpl?(promptController(context: context, text: "Слово-триггер (можно несколько через запятую)", value: nil, placeholder: "", apply: { word in
                     guard let word = word?.trimmingCharacters(in: .whitespacesAndNewlines), !word.isEmpty else {
                         return
                     }
-                    presentImpl?(promptController(context: context, text: "Ответ на слово «\(word)»", value: nil, placeholder: "", apply: { reply in
-                        guard let reply = reply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty else {
-                            return
-                        }
-                        var list = AyuPremiumService.triggers
-                        if list.count < AyuPremiumService.maxTriggers {
-                            list.append(AyuTrigger(word: word, reply: reply))
-                            AyuPremiumService.triggers = list
-                        }
-                        refresh.set(true)
-                    }))
+                    var list = AyuPremiumService.triggers
+                    if list.count < AyuPremiumService.maxTriggers {
+                        list.append(AyuTrigger(word: word, reply: "{имя}, привет! Сообщение получил, отвечу позже."))
+                        AyuPremiumService.triggers = list
+                    }
+                    refresh.set(true)
+                    let newIndex = list.count - 1
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: {
+                        pushImpl?(gfpramTriggerEditController(context: context, index: newIndex, onChange: { refresh.set(true) }))
+                    })
                 }))
             case 3:
                 presentImpl?(gfpramAlert(context: context, title: "Удалить все слова?", text: "Список слов-триггеров этого аккаунта будет очищен.", actions: [
@@ -107,6 +107,7 @@ public func gfpramTriggersController(context: AccountContext) -> ViewController 
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     pushImpl = { [weak controller] c in
         controller?.push(c)
     }
@@ -228,6 +229,7 @@ func gfpramTriggerEditController(context: AccountContext, index: Int, onChange: 
     }
 
     let controller = ItemListController(context: context, state: signal)
+    gfpramAnimateAppear(controller)
     presentImpl = { [weak controller] c in
         controller?.present(c, in: .window(.root))
     }

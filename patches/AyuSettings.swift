@@ -323,7 +323,7 @@ public enum AyuSettings {
         }
     }
 
-    public static let version = "1.4"
+    public static let version = "2.1"
 
     private static let ghostKeys = ["ghostRead", "ghostTyping", "ghostOnline", "ghostStories", "ghostScreenshot", "ghostConsume"]
 
@@ -368,7 +368,7 @@ public enum AyuSettings {
     private static let defaultOff: Set<String> = ["showIds", "premiumStub", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline"]
 
     /// Переключатели Premium: у каждого аккаунта свои.
-    private static let accountKeys: Set<String> = ["premiumStub", "premiumBackup", "premiumStar", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline", "arOffline"]
+    private static let accountKeys: Set<String> = ["premiumStub", "premiumBackup", "premiumStar", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline", "arOffline", "kwAway", "reactAway"]
 
     private static func storageKey(_ key: String, account: Int64?) -> String {
         if accountKeys.contains(key) {
@@ -548,7 +548,21 @@ public enum AyuBadges {
 
 /// Локальное описание значка в профиле (как «verified by Major» у ботов, но только на этом устройстве).
 public enum AyuVerified {
-    public static let text = "GFPGRAM — официальный аккаунт разработчика клиента"
+    public static let text = "Официальный аккаунт разработчика клиента"
+
+    /// Красивые значки для профиля одной строкой (nil — значков нет).
+    public static func badges(id: Int64, username: String?) -> String? {
+        var list: [String] = []
+        let official = AyuBadges.contains(id) || (username ?? "").lowercased() == "gfpgram_support"
+        if official {
+            list.append("🛠 Разработчик")
+            list.append("✅ Официальный")
+        }
+        if AyuPremium.isActive(for: id) {
+            list.append("💎 Premium")
+        }
+        return list.isEmpty ? nil : list.joined(separator: "   ")
+    }
 
     public static func text(id: Int64, username: String?) -> String? {
         if AyuBadges.contains(id) { return text }

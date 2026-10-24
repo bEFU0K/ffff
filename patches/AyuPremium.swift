@@ -584,6 +584,34 @@ public enum AyuPremiumService {
         })
     }
 
+    /// «Не в сети»: приложение свёрнуто или экран заблокирован.
+    public static var isOffline: Bool { return !isForeground }
+
+    /// Нерабочее время: включён режим «Занят» или сейчас ночное окно (если включён ночной режим).
+    public static func isNonWorkingNow() -> Bool {
+        if AyuSettings.value("arBusy") { return true }
+        return AyuSettings.value("arNight") && isNightNow()
+    }
+
+    /// Можно отвечать сам: я не в сети или нерабочее время.
+    public static func isAway() -> Bool {
+        return isOffline || isNonWorkingNow()
+    }
+
+    private static func normalized(_ text: String) -> String {
+        return text.lowercased().replacingOccurrences(of: "ё", with: "е")
+    }
+
+    /// В поле слова можно несколько вариантов через запятую, «;» или «|».
+    private static func triggerMatches(_ trigger: AyuTrigger, in text: String) -> Bool {
+        let separators = CharacterSet(charactersIn: ",;|\n")
+        for part in trigger.word.components(separatedBy: separators) {
+            let word = normalized(part.trimmingCharacters(in: .whitespacesAndNewlines))
+            if !word.isEmpty && text.contains(word) { return true }
+        }
+        return false
+    }
+
     public static func isNightNow() -> Bool {
         let hour = Calendar.current.component(.hour, from: Date())
         let from = nightStart
@@ -757,30 +785,33 @@ public enum AyuPremiumService {
             senderName = first
         }
 
-        if isPrivate && peerId != account.peerId && peerId.id._internalGetInt64Value() != 777000 {
-            // Автоответчик в личных чатах: текст зависит от состояния (не в сети / в сети / ночью / занят)
-            if AyuSettings.value("premiumDmReply"), let template = autoReplyText(), allow("dm:" + chatKey, interval: Double(replyMinutes * 60)) {
-                send(account: account, peerId: peerId, text: fill(template, name: senderName, chat: chatTitle), replyTo: nil)
-            }
-            // Авто-реакция на входящие личные сообщения
-            if AyuSettings.value("premiumReact") {
-                TelegramEngine(account: account).messages.setMessageReactions(ids: [message.id], reactions: [.builtin(reactEmoji)])
-            }
-        }
+        let away = isAway()
+        let chatFull = peerId.toInt64()
 
-        // Слова-триггеры (личные чаты и группы): срабатывает первое подходящее слово, раз в минуту на слово и чат
-        if AyuSettings.value("premiumKeyword") && !message.text.isEmpty {
-            let lowered = message.text.lowercased()
-            let chatFull = peerId.toInt64()
+        // 1) Слова-триггеры (личные чаты и группы). Только когда я не в сети / в нерабочее время (можно отключить).
+        var triggerMatched = false
+        if AyuSettings.value("premiumKeyword") && !message.text.isEmpty && (away || !AyuSettings.value("kwAway")) {
+            let lowered = normalized(message.text)
             for trigger in triggers {
-                let word = trigger.word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if word.isEmpty || trigger.reply.isEmpty { continue }
+                if trigger.reply.isEmpty { continue }
                 if let only = trigger.chatId, only != chatFull { continue }
-                if !lowered.contains(word) { continue }
-                if allow("kw:" + chatKey + ":" + word, interval: 60) {
+                if !triggerMatches(trigger, in: lowered) { continue }
+                triggerMatched = true
+                if allow("kw:" + chatKey + ":" + normalized(trigger.word), interval: 30) {
                     send(account: account, peerId: peerId, text: fill(trigger.reply, name: senderName, chat: chatTitle), replyTo: message.id)
                 }
                 break
+            }
+        }
+
+        if isPrivate && peerId != account.peerId && peerId.id._internalGetInt64Value() != 777000 {
+            // 2) Автоответчик: не отвечает, если уже ответил триггер
+            if !triggerMatched, AyuSettings.value("premiumDmReply"), let template = autoReplyText(), allow("dm:" + chatKey, interval: Double(replyMinutes * 60)) {
+                send(account: account, peerId: peerId, text: fill(template, name: senderName, chat: chatTitle), replyTo: nil)
+            }
+            // 3) Авто-реакция: только когда я не в сети / в нерабочее время (можно отключить)
+            if AyuSettings.value("premiumReact") && (away || !AyuSettings.value("reactAway")) {
+                TelegramEngine(account: account).messages.setMessageReactions(ids: [message.id], reactions: [.builtin(reactEmoji)])
             }
         }
 
