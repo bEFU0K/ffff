@@ -323,7 +323,7 @@ public enum AyuSettings {
         }
     }
 
-    public static let version = "2.3"
+    public static let version = "2.5"
 
     private static let ghostKeys = ["ghostRead", "ghostTyping", "ghostOnline", "ghostStories", "ghostScreenshot", "ghostConsume"]
 
@@ -365,10 +365,10 @@ public enum AyuSettings {
     }
 
     /// Переключатели, которые по умолчанию выключены.
-    private static let defaultOff: Set<String> = ["showIds", "premiumStub", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline"]
+    private static let defaultOff: Set<String> = ["showIds", "premiumStub", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline", "kwOnlyAway", "reactOnlyAway"]
 
     /// Переключатели Premium: у каждого аккаунта свои.
-    private static let accountKeys: Set<String> = ["premiumStub", "premiumBackup", "premiumStar", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline", "arOffline", "kwAway", "reactAway"]
+    private static let accountKeys: Set<String> = ["premiumStub", "premiumBackup", "premiumStar", "premiumDmReply", "premiumKeyword", "premiumReact", "arOnline", "arBusy", "arNight", "arStubOffline", "arOffline", "kwOnlyAway", "reactOnlyAway"]
 
     private static func storageKey(_ key: String, account: Int64?) -> String {
         if accountKeys.contains(key) {

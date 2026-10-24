@@ -126,7 +126,7 @@ private func gfpramPremiumEntries() -> [GfpramEntry] {
     entries.append(.action(202, "Автоответчик: тексты и режимы", "", 50))
     entries.append(.action(203, "Слова-триггеры и ответы", AyuPremiumService.triggers.isEmpty ? "не заданы" : String(AyuPremiumService.triggers.count) + " из " + String(AyuPremiumService.maxTriggers), 17))
     entries.append(.action(205, "Реакция", AyuPremiumService.reactEmoji, 16))
-    entries.append(.toggle(208, "Реакция только когда я не в сети или ночью", "reactAway", AyuSettings.value("reactAway")))
+    entries.append(.toggle(208, "Реакция только когда я не в сети или ночью", "reactOnlyAway", AyuSettings.value("reactOnlyAway")))
     entries.append(.action(206, "Бэкапы аккаунтов", String(AyuBackup.entries().count), 12))
     entries.append(.footer(207, "Premium, тексты и слова у каждого аккаунта свои. Автоответы, слова и реакции работают, пока приложение запущено (iOS усыпляет свёрнутое приложение через несколько секунд). Автоответ не отправляется ботам. Бэкап сохраняет имя, ID, юзернейм и номер в связку ключей iOS; сам вход (сессию) он не хранит: чтобы вернуться в аккаунт, нужен код из Telegram."))
 

@@ -790,7 +790,7 @@ public enum AyuPremiumService {
 
         // 1) Слова-триггеры (личные чаты и группы). Только когда я не в сети / в нерабочее время (можно отключить).
         var triggerMatched = false
-        if AyuSettings.value("premiumKeyword") && !message.text.isEmpty && (away || !AyuSettings.value("kwAway")) {
+        if AyuSettings.value("premiumKeyword") && !message.text.isEmpty && (away || !AyuSettings.value("kwOnlyAway")) {
             let lowered = normalized(message.text)
             for trigger in triggers {
                 if trigger.reply.isEmpty { continue }
@@ -810,7 +810,7 @@ public enum AyuPremiumService {
                 send(account: account, peerId: peerId, text: fill(template, name: senderName, chat: chatTitle), replyTo: nil)
             }
             // 3) Авто-реакция: только когда я не в сети / в нерабочее время (можно отключить)
-            if AyuSettings.value("premiumReact") && (away || !AyuSettings.value("reactAway")) {
+            if AyuSettings.value("premiumReact") && (away || !AyuSettings.value("reactOnlyAway")) {
                 TelegramEngine(account: account).messages.setMessageReactions(ids: [message.id], reactions: [.builtin(reactEmoji)])
             }
         }

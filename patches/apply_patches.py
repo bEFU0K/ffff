@@ -363,6 +363,105 @@ _design_edit("auth-code", "AuthorizationUI/Sources/AuthorizationSequenceCodeEntr
 _design_edit("auth-root", "AuthorizationUI/Sources/AuthorizationSequenceController.swift", [
     ("        self.view.backgroundColor = self.presentationData.theme.list.plainBackgroundColor", "        self.view.backgroundColor = GfpramBackdrop.authColor(fallback: self.presentationData.theme.list.plainBackgroundColor)", 1)])
 
+# ---------- Дизайн 2.4: остальное из preview/gfpgram-preview.html (карточки, вкладки, переключатели, фон чата, значки, кнопки) ----------
+_DK = "makeDefaultDarkPresentationTheme("
+_design_edit("theme-dark", "TelegramPresentationData/Sources/DefaultDarkPresentationTheme.swift", [
+    # шапка и нижняя панель: полупрозрачное стекло как в HTML, неактивные вкладки серые
+    ("blurredBackgroundColor: UIColor(rgb: 0x1d1d1d, alpha: 0.9),", "blurredBackgroundColor: UIColor(rgb: 0x141416, alpha: 0.82),", 1),
+    ("        iconColor: UIColor(rgb: 0xffffff),\n        selectedIconColor:", "        iconColor: UIColor(rgb: 0x8e8e93),\n        selectedIconColor:", 1),
+    ("        textColor: UIColor(rgb: 0xffffff),\n        selectedTextColor:", "        textColor: UIColor(rgb: 0x8e8e93),\n        selectedTextColor:", 1),
+    # переключатели: фиолетовые, белый бегунок
+    ("handleColor: UIColor(rgb: 0x121212),\n        contentColor: UIColor(rgb: 0x67ce67),", "handleColor: UIColor(rgb: 0xffffff),\n        contentColor: UIColor(rgb: 0x8f7bff),", 1),
+    ("fillColor: UIColor(rgb: 0xffffff),\n            strokeColor: UIColor(rgb: 0xffffff, alpha: 0.3),\n            foregroundColor:  UIColor(rgb: 0x000000)", "fillColor: " + _VD + ",\n            strokeColor: UIColor(rgb: 0xffffff, alpha: 0.3),\n            foregroundColor: UIColor(rgb: 0xffffff)", 1),
+    # карточки списков: #1c1c1e, разделители #2c2c2e
+    ("itemBlocksBackgroundColor: UIColor(rgb: 0x1c1c1d),", "itemBlocksBackgroundColor: UIColor(rgb: 0x1c1c1e),", 1),
+    ("itemBlocksSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),\n        itemPlainSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),", "itemBlocksSeparatorColor: UIColor(rgb: 0x2c2c2e),\n        itemPlainSeparatorColor: UIColor(rgb: 0x2c2c2e),", 1),
+    ("        itemSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),\n        itemBackgroundColor: UIColor(rgb: 0x000000),", "        itemSeparatorColor: UIColor(rgb: 0x2c2c2e),\n        itemBackgroundColor: UIColor(rgb: 0x000000),", 1),
+    # список чатов: поиск как карточка, значок, онлайн, истории с градиентным кольцом
+    ("pinnedSearchBarColor: UIColor(rgb: 0x272728),\n        regularSearchBarColor: UIColor(rgb: 0x272728),", "pinnedSearchBarColor: UIColor(rgb: 0x1c1c1e),\n        regularSearchBarColor: UIColor(rgb: 0x1c1c1e),", 1),
+    ("verifiedIconFillColor: UIColor(rgb: 0xffffff),\n        verifiedIconForegroundColor:  UIColor(rgb: 0x000000),", "verifiedIconFillColor: " + _VD + ",\n        verifiedIconForegroundColor: UIColor(rgb: 0xffffff),", 1),
+    ("topColor: UIColor(rgb: 0x72d5fd), bottomColor: UIColor(rgb: 0x2a9ef1)", "topColor: UIColor(rgb: 0xa48bff), bottomColor: UIColor(rgb: 0x7a5cff)", 1),
+    ("onlineDotColor: UIColor(rgb: 0x4cc91f)", "onlineDotColor: UIColor(rgb: 0x34c759)", 1),
+    ("checkmarkColor: UIColor(rgb: 0xffffff),\n        pendingIndicatorColor", "checkmarkColor: " + _V + ",\n        pendingIndicatorColor", 1),
+    ("topColor: UIColor(rgb: 0x34C76F), bottomColor: UIColor(rgb: 0x3DA1FD)", "topColor: UIColor(rgb: 0x7a5cff), bottomColor: UIColor(rgb: 0xff5fa2)", 1),
+    ("topColor: UIColor(rgb: 0x7CD636), bottomColor: UIColor(rgb: 0x26B470)", "topColor: UIColor(rgb: 0xff9a44), bottomColor: UIColor(rgb: 0xff5fa2)", 1),
+    # пузыри: входящий как карточка, ссылки и акценты внутри пузыря светло-фиолетовые
+    ("fill: [UIColor(rgb: 0x1D1D1D, alpha: incomingBubbleAlpha)],", "fill: [UIColor(rgb: 0x1c1c1e)],", 0),
+    ("linkTextColor: UIColor(rgb: 0xffffff), linkHighlightColor: UIColor(rgb: 0xffffff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xffffff), accentControlColor: UIColor(rgb: 0xffffff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xffffff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.4)",
+     "linkTextColor: UIColor(rgb: 0xb7a6ff), linkHighlightColor: UIColor(rgb: 0xb7a6ff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xb7a6ff), accentControlColor: UIColor(rgb: 0xb7a6ff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xb7a6ff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.4)", 1),
+    ("infoLinkTextColor: UIColor(rgb: 0xffffff),", "infoLinkTextColor: UIColor(rgb: 0xb7a6ff),", 1),
+    ("selectionControlColors: PresentationThemeFillStrokeForeground(fillColor: UIColor(rgb: 0xffffff), strokeColor: UIColor(rgb: 0xffffff), foregroundColor:  UIColor(rgb: 0x000000)),", "selectionControlColors: PresentationThemeFillStrokeForeground(fillColor: " + _VD + ", strokeColor: " + _VD + ", foregroundColor: UIColor(rgb: 0xffffff)),", 1),
+    # поле ввода и кнопка отправки
+    ("panelControlAccentColor: UIColor(rgb: 0xffffff),", "panelControlAccentColor: " + _V + ",", 1),
+    ("actionControlFillColor: UIColor(rgb: 0xffffff),\n        actionControlForegroundColor:  UIColor(rgb: 0x000000),", "actionControlFillColor: " + _VD + ",\n        actionControlForegroundColor: UIColor(rgb: 0xffffff),", 1),
+    ("buttonColor: UIColor(rgb: 0xffffff),\n        micLevelColor: UIColor(rgb: 0xffffff, alpha: 0.2),\n        activeIconColor:  UIColor(rgb: 0x000000)", "buttonColor: " + _VD + ",\n        micLevelColor: UIColor(rgb: 0x7a5cff, alpha: 0.25),\n        activeIconColor: UIColor(rgb: 0xffffff)", 1),
+], scope="public func " + _DK)
+# фон чата по умолчанию (тёмная тема): тёмно-фиолетовое свечение с розовым углом, как в preview
+_design_edit("theme-dark", "TelegramPresentationData/Sources/DefaultDarkPresentationTheme.swift", [
+    ("    UIColor(rgb: 0x598bf6),\n    UIColor(rgb: 0x7a5eef),\n    UIColor(rgb: 0xd67cff),\n    UIColor(rgb: 0xf38b58)", "    UIColor(rgb: 0x2b1d6e),\n    UIColor(rgb: 0x1a1236),\n    UIColor(rgb: 0x5a1f4e),\n    UIColor(rgb: 0x0f0b1f)", 1),
+])
+
+_DY = "public func makeDefaultDayPresentationTheme("
+_design_edit("theme-day", "TelegramPresentationData/Sources/DefaultDayPresentationTheme.swift", [
+    ("blurredBackgroundColor: UIColor(rgb: 0xf2f2f2, alpha: 0.9),", "blurredBackgroundColor: UIColor(rgb: 0xfafafc, alpha: 0.85),", 1),
+    ("        iconColor: UIColor(rgb: 0x959595),", "        iconColor: UIColor(rgb: 0x8e8e93),", 1),
+    ("        textColor: UIColor(rgb: 0x000000, alpha: 0.8),\n        selectedTextColor:", "        textColor: UIColor(rgb: 0x8e8e93),\n        selectedTextColor:", 1),
+    ("contentColor: UIColor(rgb: 0x35c759),", "contentColor: UIColor(rgb: 0x7a5cff),", 1),
+    ("        blocksBackgroundColor: UIColor(rgb: 0xefeff4),", "        blocksBackgroundColor: UIColor(rgb: 0xf2f2f7),", 1),
+    ("        modalBlocksBackgroundColor: UIColor(rgb: 0xefeff4),", "        modalBlocksBackgroundColor: UIColor(rgb: 0xf2f2f7),", 1),
+    ("        plainBackgroundColor: UIColor(rgb: 0xffffff),\n        modalPlainBackgroundColor: UIColor(rgb: 0xffffff),", "        plainBackgroundColor: UIColor(rgb: 0xf2f2f7),\n        modalPlainBackgroundColor: UIColor(rgb: 0xf2f2f7),", 1),
+    ("itemBlocksSeparatorColor: UIColor(rgb: 0xc8c7cc),\n        itemPlainSeparatorColor: UIColor(rgb: 0xc8c7cc),", "itemBlocksSeparatorColor: UIColor(rgb: 0xe5e5ea),\n        itemPlainSeparatorColor: UIColor(rgb: 0xe5e5ea),", 1),
+    ("        backgroundColor: UIColor(rgb: 0xffffff),\n        itemSeparatorColor: UIColor(rgb: 0xc8c7cc),\n        itemBackgroundColor: UIColor(rgb: 0xffffff),\n        pinnedItemBackgroundColor: UIColor(rgb: 0xf7f7f7),",
+     "        backgroundColor: UIColor(rgb: 0xf2f2f7),\n        itemSeparatorColor: UIColor(rgb: 0xe5e5ea),\n        itemBackgroundColor: UIColor(rgb: 0xf2f2f7),\n        pinnedItemBackgroundColor: UIColor(rgb: 0xffffff),", 1),
+    ("itemSelectedBackgroundColor: UIColor(rgb: 0xe9f0fa),", "itemSelectedBackgroundColor: UIColor(rgb: 0xece7ff),", 1),
+    ("pinnedSearchBarColor: UIColor(rgb: 0xe5e5e5),\n        regularSearchBarColor: UIColor(rgb: 0xe9e9e9),", "pinnedSearchBarColor: UIColor(rgb: 0xffffff),\n        regularSearchBarColor: UIColor(rgb: 0xffffff),", 1),
+    ("topColor: UIColor(rgb: 0x72d5fd), bottomColor: UIColor(rgb: 0x2a9ef1)", "topColor: UIColor(rgb: 0xa48bff), bottomColor: UIColor(rgb: 0x7a5cff)", 1),
+    ("onlineDotColor: UIColor(rgb: 0x4cc91f)", "onlineDotColor: UIColor(rgb: 0x34c759)", 1),
+    ("topColor: UIColor(rgb: 0x34C76F), bottomColor: UIColor(rgb: 0x3DA1FD)", "topColor: UIColor(rgb: 0x7a5cff), bottomColor: UIColor(rgb: 0xff5fa2)", 1),
+    ("topColor: UIColor(rgb: 0x7CD636), bottomColor: UIColor(rgb: 0x26B470)", "topColor: UIColor(rgb: 0xff9a44), bottomColor: UIColor(rgb: 0xff5fa2)", 1),
+    ("highlightedFill: UIColor(rgb: 0xd9f4ff),", "highlightedFill: UIColor(rgb: 0xe9e3ff),", 0),
+], scope=_DY)
+# фон чата по умолчанию (светлая тема): светлое сиреневое свечение
+_design_edit("theme-day", "TelegramPresentationData/Sources/DefaultDayPresentationTheme.swift", [
+    ("    UIColor(rgb: 0xdbddbb),\n    UIColor(rgb: 0x6ba587),\n    UIColor(rgb: 0xd5d88d),\n    UIColor(rgb: 0x88b884)", "    UIColor(rgb: 0xe6deff),\n    UIColor(rgb: 0xf3ecff),\n    UIColor(rgb: 0xffdcec),\n    UIColor(rgb: 0xffeedd)", 1),
+])
+
+# ---------- Дизайн 2.5: мелкие правки поверх 2.4 (каждая проверяется и пишется в patch-report.txt) ----------
+# список чатов: выбранный и нажатый чат с фиолетовым оттенком, закреплённые чуть темнее карточки
+_design_edit("theme-dark", "TelegramPresentationData/Sources/DefaultDarkPresentationTheme.swift", [
+    ("itemSelectedBackgroundColor: UIColor(rgb: 0x191919)", "itemSelectedBackgroundColor: UIColor(rgb: 0x1f1a33)", 1),
+    ("itemHighlightedBackgroundColor: UIColor(rgb: 0x191919)", "itemHighlightedBackgroundColor: UIColor(rgb: 0x1f1a33)", 1),
+    ("pinnedItemBackgroundColor: UIColor(rgb: 0x1c1c1d)", "pinnedItemBackgroundColor: UIColor(rgb: 0x16161a)", 1),
+], scope="public func " + _DK)
+
+# закруглённость пузырей как в HTML: 20 / 6
+_design_edit("theme-bubbles", "TelegramUIPreferences/Sources/PresentationThemeSettings.swift", [
+    ("PresentationChatBubbleSettings(mainRadius: 16, auxiliaryRadius: 8, mergeBubbleCorners: true)", "PresentationChatBubbleSettings(mainRadius: 20, auxiliaryRadius: 6, mergeBubbleCorners: true)", 1)])
+
+# главные кнопки приложения (вход, «Продолжить» и т.д.): градиент фиолетовый → розовый → оранжевый
+_design_edit("theme-buttons", "PresentationDataUtils/Sources/SolidRoundedButtonNode.swift", [
+    ("import SolidRoundedButtonNode\nimport TelegramPresentationData", "import Display\nimport SolidRoundedButtonNode\nimport TelegramPresentationData", 1),
+    ("self.init(backgroundColor: theme.list.itemCheckColors.fillColor, backgroundColors: [],", "self.init(backgroundColor: theme.list.itemCheckColors.fillColor, backgroundColors: [UIColor(rgb: 0x7a5cff), UIColor(rgb: 0xff5fa2), UIColor(rgb: 0xff9a44)],", 1)])
+_design_edit("theme-buttons", "AuthorizationUI/Sources/AuthorizationSequencePhoneEntryControllerNode.swift", [("height: 50.0, cornerRadius: 50 * 0.5)", "height: 50.0, cornerRadius: 18.0)", 1)])
+_design_edit("theme-buttons", "AuthorizationUI/Sources/AuthorizationSequenceSignUpControllerNode.swift", [("height: 50.0, cornerRadius: 50.0 * 0.5)", "height: 50.0, cornerRadius: 18.0)", 1)])
+
+# значок непрочитанного в списке чатов: градиент как в HTML
+_design_edit("theme-badge", "TelegramPresentationData/Sources/Resources/PresentationResourcesChatList.swift", [
+    ("        context.fillEllipse(in: CGRect(origin: CGPoint(), size: size))\n        if let icon = icon, let cgImage = icon.cgImage {",
+     "        context.fillEllipse(in: CGRect(origin: CGPoint(), size: size))\n"
+     "        if active && !reaction && !provisional {\n"
+     "            context.saveGState()\n"
+     "            context.addEllipse(in: CGRect(origin: CGPoint(), size: size))\n"
+     "            context.clip()\n"
+     "            let gfpColors = [UIColor(rgb: 0x7a5cff).cgColor, UIColor(rgb: 0xff5fa2).cgColor] as CFArray\n"
+     "            if let gfpGradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: gfpColors, locations: [0.0, 1.0]) {\n"
+     "                context.drawLinearGradient(gfpGradient, start: CGPoint(), end: CGPoint(x: size.width, y: size.height), options: [])\n"
+     "            }\n"
+     "            context.restoreGState()\n"
+     "        }\n"
+     "        if let icon = icon, let cgImage = icon.cgImage {", 1)], scope="private func generateBadgeBackgroundImage(")
+
+
 # Плавность: файл с нажатиями живёт в Display (его видят и ChatListUI, и SettingsUI)
 def _motion_setup():
     _disp = os.path.join(root, "submodules/Display/Source")

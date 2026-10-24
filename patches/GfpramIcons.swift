@@ -172,6 +172,8 @@ final class GfpramIconCarouselView: UIView {
         super.layoutSubviews()
         self.imageView.frame = self.bounds
         self.imageView.layer.cornerRadius = self.bounds.width * 0.23
+        // явный путь тени: без него тень пересчитывается через offscreen-проход на каждом кадре «парения»
+        self.layer.shadowPath = UIBezierPath(roundedRect: self.bounds, cornerRadius: self.bounds.width * 0.23).cgPath
         let diameter = floor(self.bounds.width * 0.32)
         self.lockBackground.frame = CGRect(x: self.bounds.width - diameter + 4.0, y: self.bounds.height - diameter + 4.0, width: diameter, height: diameter)
         self.lockBackground.layer.cornerRadius = diameter / 2.0

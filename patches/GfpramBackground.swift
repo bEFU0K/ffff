@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import ObjectiveC
 import ImageIO
+import CoreImage
 
 /// Свой фон клиента: фото или GIF под всеми экранами. Экраны делаются прозрачными, чтобы фон был виден.
 public enum GfpramBackground {
@@ -76,6 +77,11 @@ public enum GfpramBackground {
         applyNow(retries: 8)
     }
 
+    private static var generation = 0
+    private static let decodeQueue = DispatchQueue(label: "gfpgram.bg.decode", qos: .userInitiated)
+    /// Радиус размытия, запекаемого в статичное фото (для GIF остаётся живое размытие).
+    private static let bakedRadius: [Double] = [0.0, 6.0, 14.0, 26.0]
+
     private static func applyNow(retries: Int) {
         if !Thread.isMainThread {
             DispatchQueue.main.async { applyNow(retries: retries) }
@@ -89,6 +95,8 @@ public enum GfpramBackground {
             }
             return
         }
+        generation += 1
+        let current = generation
         window.viewWithTag(hostTag)?.removeFromSuperview()
         let on = isEnabled
         active = on && transparentScreens
@@ -96,48 +104,115 @@ public enum GfpramBackground {
             restore(in: window)
             return
         }
-        guard let data = try? Data(contentsOf: fileURL) else {
-            return
-        }
-        let host = UIView(frame: window.bounds)
-        host.tag = hostTag
-        host.isUserInteractionEnabled = false
-        host.backgroundColor = .black
-        host.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        let imageView = UIImageView(frame: host.bounds)
-        imageView.contentMode = .scaleAspectFill
-        imageView.clipsToBounds = true
-        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        if isGif, let gif = decodeGif(data) {
-            imageView.animationImages = gif.frames
-            imageView.animationDuration = gif.duration
-            imageView.image = gif.frames.first
-            if !UIAccessibility.isReduceMotionEnabled {
-                imageView.startAnimating()
+        let gif = isGif
+        let blurStep = blurIndex
+        let dimStep = dimIndex
+        let size = window.bounds.size
+        let scale = max(1.0, window.screen.scale)
+        let url = fileURL
+        // Декодирование и размытие — не на главном потоке: запуск и переключения не подвисают
+        decodeQueue.async {
+            guard let data = try? Data(contentsOf: url) else {
+                return
             }
-        } else {
-            imageView.image = UIImage(data: data)
+            var frames: [UIImage] = []
+            var duration = 0.0
+            var still: UIImage?
+            if gif, let decoded = decodeGif(data) {
+                frames = decoded.frames
+                duration = decoded.duration
+            } else {
+                let limit = max(size.width, size.height) * scale
+                if let image = downsample(data, maxPixel: limit) {
+                    still = blurStep > 0 ? blurred(image, radius: bakedRadius[blurStep]) : image
+                }
+            }
+            DispatchQueue.main.async {
+                if current != generation {
+                    return
+                }
+                guard let window = window else {
+                    return
+                }
+                window.viewWithTag(hostTag)?.removeFromSuperview()
+                let host = UIView(frame: window.bounds)
+                host.tag = hostTag
+                host.isUserInteractionEnabled = false
+                host.backgroundColor = .black
+                host.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                let imageView = UIImageView(frame: host.bounds)
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                if frames.count > 1 {
+                    imageView.animationImages = frames
+                    imageView.animationDuration = duration
+                    imageView.image = frames.first
+                    if !UIAccessibility.isReduceMotionEnabled {
+                        imageView.startAnimating()
+                    }
+                } else if let still = still {
+                    imageView.image = still
+                } else {
+                    imageView.image = UIImage(data: data)
+                }
+                host.addSubview(imageView)
+                if frames.count > 1 && blurLevels[blurStep] > 0.0 {
+                    let blur = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+                    blur.frame = host.bounds
+                    blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                    blur.alpha = CGFloat(blurLevels[blurStep])
+                    host.addSubview(blur)
+                }
+                if dimLevels[dimStep] > 0.0 {
+                    let dim = UIView(frame: host.bounds)
+                    dim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                    dim.backgroundColor = UIColor.black.withAlphaComponent(CGFloat(dimLevels[dimStep]))
+                    host.addSubview(dim)
+                }
+                window.insertSubview(host, at: 0)
+                if active {
+                    clearBlack(in: window)
+                } else {
+                    restore(in: window)
+                }
+            }
         }
-        host.addSubview(imageView)
-        if blurLevels[blurIndex] > 0.0 {
-            let blur = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
-            blur.frame = host.bounds
-            blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            blur.alpha = CGFloat(blurLevels[blurIndex])
-            host.addSubview(blur)
+    }
+
+    /// Уменьшает фото до размера экрана: меньше памяти и быстрее отрисовка.
+    private static func downsample(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
         }
-        if dimLevels[dimIndex] > 0.0 {
-            let dim = UIView(frame: host.bounds)
-            dim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            dim.backgroundColor = UIColor.black.withAlphaComponent(CGFloat(dimLevels[dimIndex]))
-            host.addSubview(dim)
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(512.0, maxPixel)
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
         }
-        window.insertSubview(host, at: 0)
-        if active {
-            clearBlack(in: window)
-        } else {
-            restore(in: window)
+        return UIImage(cgImage: image)
+    }
+
+    /// Размытие запекается в картинку один раз, вместо живого UIVisualEffectView на весь экран.
+    private static func blurred(_ image: UIImage, radius: Double) -> UIImage {
+        guard let cg = image.cgImage, let filter = CIFilter(name: "CIGaussianBlur") else {
+            return image
         }
+        let input = CIImage(cgImage: cg)
+        filter.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
+        filter.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let output = filter.outputImage else {
+            return image
+        }
+        let context = CIContext(options: nil)
+        guard let result = context.createCGImage(output, from: input.extent) else {
+            return image
+        }
+        return UIImage(cgImage: result)
     }
 
     private static func decodeGif(_ data: Data) -> (frames: [UIImage], duration: Double)? {
@@ -148,12 +223,13 @@ public enum GfpramBackground {
         if count < 2 {
             return nil
         }
-        let step = max(1, count / 60)
+        // не больше 36 кадров на 540 пикселей: GIF не съедает память и не тормозит экраны
+        let step = max(1, Int((Double(count) / 36.0).rounded(.up)))
         var frames: [UIImage] = []
         var total = 0.0
         var index = 0
         while index < count {
-            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 720]
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 540]
             if let image = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) {
                 frames.append(UIImage(cgImage: image))
             }
@@ -199,17 +275,54 @@ public enum GfpramBackground {
         return false
     }
 
+    private static let decisionLock = NSLock()
+    private static var classDecision: [ObjectIdentifier: Bool] = [:]
+
+    /// Решение по классу узла считается один раз и запоминается (раньше строки сравнивались при каждой смене цвета любого слоя).
+    private static func nodeAllowed(_ view: UIView) -> Bool? {
+        let selector = Selector(("asyncdisplaykit_node"))
+        guard view.responds(to: selector), let object = view.perform(selector)?.takeUnretainedValue() else {
+            return nil
+        }
+        let nodeClass: AnyClass = type(of: object)
+        let id = ObjectIdentifier(nodeClass)
+        decisionLock.lock()
+        if let known = classDecision[id] {
+            decisionLock.unlock()
+            return known
+        }
+        decisionLock.unlock()
+        let name = String(describing: nodeClass)
+        let allowed = !deniedNodes.contains(where: { name.contains($0) }) && allowedNodes.contains(where: { name.contains($0) })
+        decisionLock.lock()
+        classDecision[id] = allowed
+        decisionLock.unlock()
+        return allowed
+    }
+
+    /// Корневые обычные UIView окна (не узлы Telegram): именно они были чёрными и закрывали фон целиком.
+    private static func isRootContainer(_ view: UIView) -> Bool {
+        guard let window = view.window else {
+            return false
+        }
+        let root = window.rootViewController?.view
+        if !(view === root || view.superview === window || (root != nil && view.superview === root)) {
+            return false
+        }
+        return view.bounds.width >= window.bounds.width - 1.0 && view.bounds.height >= window.bounds.height - 1.0
+    }
+
     fileprivate static func shouldClear(_ layer: CALayer, _ color: CGColor) -> Bool {
         if !active || !isBackgroundColor(color) {
             return false
         }
-        guard let view = layer.delegate as? UIView, view.tag != hostTag, let name = GfpramMotion.nodeName(view) else {
+        guard let view = layer.delegate as? UIView, view.tag != hostTag else {
             return false
         }
-        if deniedNodes.contains(where: { name.contains($0) }) {
-            return false
+        if let allowed = nodeAllowed(view) {
+            return allowed
         }
-        return allowedNodes.contains(where: { name.contains($0) })
+        return isRootContainer(view)
     }
 
     fileprivate static func remember(_ layer: CALayer, _ color: CGColor) {
@@ -224,6 +337,9 @@ public enum GfpramBackground {
     }
 
     private static func clearBlack(in window: UIWindow) {
+        if let color = window.rootViewController?.view.layer.backgroundColor, let rootLayer = window.rootViewController?.view.layer, shouldClear(rootLayer, color) {
+            rootLayer.backgroundColor = color
+        }
         walk(window) { view in
             if let color = view.layer.backgroundColor, shouldClear(view.layer, color) {
                 view.layer.backgroundColor = color

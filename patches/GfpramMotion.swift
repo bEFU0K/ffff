@@ -28,7 +28,7 @@ public enum GfpramMotion {
         if UIAccessibility.isReduceMotionEnabled {
             return
         }
-        for (index, view) in views.prefix(14).enumerated() {
+        for (index, view) in views.prefix(10).enumerated() {
             let begin = view.layer.convertTime(CACurrentMediaTime(), from: nil) + Double(index) * 0.04
 
             let fade = CABasicAnimation(keyPath: "opacity")
@@ -64,17 +64,36 @@ public enum GfpramMotion {
         return String(describing: type(of: object))
     }
 
+    private static var pressableCache: [ObjectIdentifier: Bool] = [:]
+
+    /// Строка ли это настроек, на которую нужно «вдавливание». Решение по классу узла запоминается.
+    private static func isPressableRow(_ view: UIView) -> Bool {
+        let selector = Selector(("asyncdisplaykit_node"))
+        guard view.responds(to: selector), let object = view.perform(selector)?.takeUnretainedValue() else {
+            return false
+        }
+        let nodeClass: AnyClass = type(of: object)
+        let id = ObjectIdentifier(nodeClass)
+        if let known = pressableCache[id] {
+            return known
+        }
+        let name = String(describing: nodeClass)
+        let result = pressableRows.contains(where: { name.contains($0) })
+        pressableCache[id] = result
+        return result
+    }
+
     private static func pressTarget(for hit: UIView) -> (UIView, CGFloat)? {
         var current: UIView? = hit
         var depth = 0
-        while let view = current, depth < 8 {
+        while let view = current, depth < 6 {
             if view is UISwitch || view is UITextField || view is UITextView || view is UISlider || view is UIScrollView {
                 return nil
             }
             if view is UIControl {
                 return (view, 0.92)
             }
-            if let name = nodeName(view), pressableRows.contains(where: { name.contains($0) }) {
+            if isPressableRow(view) {
                 return (view, 0.97)
             }
             current = view.superview
@@ -108,7 +127,7 @@ public enum GfpramMotion {
         case .began:
             release()
             let point = touch.location(in: window)
-            if let hit = window.hitTest(point, with: event), let (view, scale) = pressTarget(for: hit) {
+            if let hit = touch.view, let (view, scale) = pressTarget(for: hit) {
                 pressedView = view
                 startPoint = point
                 spring(view, scale: scale, down: true)
