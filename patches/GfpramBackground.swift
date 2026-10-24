@@ -131,11 +131,11 @@ public enum GfpramBackground {
                 if current != generation {
                     return
                 }
-                guard let window = window else {
+                guard let target = GfpramBackground.window else {
                     return
                 }
-                window.viewWithTag(hostTag)?.removeFromSuperview()
-                let host = UIView(frame: window.bounds)
+                target.viewWithTag(hostTag)?.removeFromSuperview()
+                let host = UIView(frame: target.bounds)
                 host.tag = hostTag
                 host.isUserInteractionEnabled = false
                 host.backgroundColor = .black
@@ -170,11 +170,11 @@ public enum GfpramBackground {
                     dim.backgroundColor = UIColor.black.withAlphaComponent(CGFloat(dimLevels[dimStep]))
                     host.addSubview(dim)
                 }
-                window.insertSubview(host, at: 0)
+                target.insertSubview(host, at: 0)
                 if active {
-                    clearBlack(in: window)
+                    clearBlack(in: target)
                 } else {
-                    restore(in: window)
+                    restore(in: target)
                 }
             }
         }
