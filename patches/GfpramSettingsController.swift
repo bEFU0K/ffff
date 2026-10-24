@@ -136,7 +136,6 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
     AyuScope.setUI(context.account.peerId.id._internalGetInt64Value())
     let refresh = ValuePromise<Bool>(true, ignoreRepeated: false)
     var pushImpl: ((ViewController) -> Void)?
-    var presentImpl: ((ViewController) -> Void)?
 
     let arguments = GfpramArguments(
         toggle: { key, newValue in
@@ -194,9 +193,6 @@ public func gfpramSettingsController(context: AccountContext) -> ViewController 
     gfpramAnimateAppear(controller)
     pushImpl = { [weak controller] c in
         controller?.push(c)
-    }
-    presentImpl = { [weak controller] c in
-        controller?.present(c, in: .window(.root))
     }
     return controller
 }

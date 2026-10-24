@@ -323,7 +323,7 @@ public enum AyuSettings {
         }
     }
 
-    public static let version = "2.2"
+    public static let version = "2.3"
 
     private static let ghostKeys = ["ghostRead", "ghostTyping", "ghostOnline", "ghostStories", "ghostScreenshot", "ghostConsume"]
 
