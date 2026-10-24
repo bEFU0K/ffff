@@ -1,0 +1,26 @@
+name: Export Telegram sources
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram_repo:
+        description: "Репозиторий основы"
+        default: "TelegramMessenger/Telegram-iOS"
+      telegram_ref:
+        description: "Ветка/тег"
+        default: "master"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone Telegram-iOS (без подмодулей, нужны только исходники экранов)
+        run: |
+          git clone --depth 1 --branch "${{ inputs.telegram_ref }}" "https://github.com/${{ inputs.telegram_repo }}.git" telegram
+      - name: Collect screens
+        run: python3 tools/export_sources.py telegram tg-sources.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tg-sources
+          path: tg-sources.zip
