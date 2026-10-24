@@ -301,11 +301,67 @@ for _extra in ("GfpramPremiumUI.swift", "GfpramAssets.swift", "GfpramIcons.swift
     shutil.copy(os.path.join(here, _extra), os.path.join(root, "submodules/SettingsUI/Sources/" + _extra))
 print("OK   GfpramSettingsController/PremiumController/PremiumUI/Assets/Icons/IconImages/EditHistory/Triggers/Font added")
 
-# Яркие акценты темы по умолчанию (меняется только число; нет констант в чекауте — просто MISSING в логе)
-patch("gfp-accent-day", r"(public let defaultDayAccentColor\s*=\s*)0x[0-9a-fA-F]+", r"\g<1>0x7a5cff",
-      base=os.path.join(root, "submodules/TelegramPresentationData"))
-patch("gfp-accent-night", r"(public let defaultNightAccentColor\s*=\s*)0x[0-9a-fA-F]+", r"\g<1>0x9b7bff",
-      base=os.path.join(root, "submodules/TelegramPresentationData"))
+# ======================= Дизайн GFPGRAM: тема (градиентные пузыри, фиолетовый акцент) и экраны входа
+def _design_find(suffix):
+    for _p in walk(os.path.join(root, "submodules")):
+        if _p.replace(os.sep, "/").endswith(suffix):
+            return _p
+    return None
+
+def _design_edit(pid, suffix, pairs, scope=None):
+    """pairs: (старое, новое, сколько раз; 0 = все). Каждую правку проверяем и пишем OK/MISSING в лог."""
+    if pid in disabled:
+        print("SKIP gfp-design-%s: отключено" % pid)
+        return
+    _p = _design_find(suffix)
+    if not _p:
+        print("MISSING gfp-design-%s: файл %s не найден" % (pid, suffix))
+        return
+    _src = read(_p)
+    _head, _tail = "", _src
+    if scope:
+        _i = _src.find(scope)
+        if _i < 0:
+            print("MISSING gfp-design-%s: нет якоря %s" % (pid, scope))
+            return
+        _head, _tail = _src[:_i], _src[_i:]
+    _ok = _bad = 0
+    for _old, _new, _cnt in pairs:
+        if _old not in _tail:
+            _bad += 1
+            print("MISSING gfp-design-%s: не найдено %r" % (pid, _old[:70]))
+            continue
+        _tail = _tail.replace(_old, _new) if _cnt == 0 else _tail.replace(_old, _new, _cnt)
+        _ok += 1
+    write(_p, _head + _tail)
+    print("%s   gfp-design-%s: %d применено, %d не найдено (%s)" % ("OK  " if not _bad else "PART", pid, _ok, _bad, os.path.basename(_p)))
+
+_V = "UIColor(rgb: 0x9b7bff)"
+_VD = "UIColor(rgb: 0x7a5cff)"
+_design_edit("theme-dark", "TelegramPresentationData/Sources/DefaultDarkPresentationTheme.swift", [
+    ("        buttonColor: UIColor(rgb: 0xffffff),\n        disabledButtonColor", "        buttonColor: " + _V + ",\n        disabledButtonColor", 1),
+    ("        accentTextColor: UIColor(rgb: 0xffffff),\n        blurredBackgroundColor", "        accentTextColor: " + _V + ",\n        blurredBackgroundColor", 1),
+    ("badgeBackgroundColor:  UIColor(rgb: 0xffffff),\n        badgeStrokeColor: UIColor(rgb: 0x1c1c1d),", "badgeBackgroundColor: " + _VD + ",\n        badgeStrokeColor: UIColor(rgb: 0x1c1c1d),", 0),
+    ("badgeStrokeColor: UIColor(rgb: 0x1c1c1d),\n        badgeTextColor:  UIColor(rgb: 0x000000)", "badgeStrokeColor: UIColor(rgb: 0x1c1c1d),\n        badgeTextColor: UIColor(rgb: 0xffffff)", 0),
+    ("        selectedIconColor: UIColor(rgb: 0xffffff),", "        selectedIconColor: " + _V + ",", 1),
+    ("        selectedTextColor: UIColor(rgb: 0xffffff),", "        selectedTextColor: " + _V + ",", 1),
+    ("        backgroundColor: UIColor(rgb: 0x1c1c1d),\n        accentColor: UIColor(rgb: 0xffffff),", "        backgroundColor: UIColor(rgb: 0x1c1c1d),\n        accentColor: " + _V + ",", 1),
+    ("        unreadBadgeActiveBackgroundColor: UIColor(rgb: 0xffffff),\n        unreadBadgeActiveTextColor: UIColor(rgb: 0x000000),", "        unreadBadgeActiveBackgroundColor: " + _VD + ",\n        unreadBadgeActiveTextColor: UIColor(rgb: 0xffffff),", 1),
+    ("        itemAccentColor: UIColor(rgb: 0xffffff),", "        itemAccentColor: " + _V + ",", 1),
+    ("fill: [UIColor(rgb: 0x61BCF9), UIColor(rgb: 0x0088ff)]", "fill: [UIColor(rgb: 0x7a5cff), UIColor(rgb: 0xff5fa2)]", 0),
+    ("highlightedFill: UIColor(rgb: 0x61BCF9)", "highlightedFill: UIColor(rgb: 0x7a5cff)", 0),
+], scope="public func makeDefaultDarkPresentationTheme(")
+_design_edit("theme-day", "TelegramPresentationData/Sources/DefaultDayPresentationTheme.swift", [
+    ("public let defaultDayAccentColor = UIColor(rgb: 0x0088ff)", "public let defaultDayAccentColor = UIColor(rgb: 0x7a5cff)", 1),
+    ("fill: [UIColor(rgb: 0x57b2e0), defaultDayAccentColor]", "fill: [UIColor(rgb: 0x7a5cff), UIColor(rgb: 0xff5fa2)]", 1),
+    ("highlightedFill: UIColor(rgb: 0x57b2e0).withMultipliedBrightnessBy(0.7)", "highlightedFill: UIColor(rgb: 0x7a5cff).withMultipliedBrightnessBy(0.8)", 1),
+])
+_design_edit("auth-phone", "AuthorizationUI/Sources/AuthorizationSequencePhoneEntryControllerNode.swift", [
+    ("        self.backgroundColor = theme.list.plainBackgroundColor", "        self.backgroundColor = GfpramBackdrop.authColor(fallback: theme.list.plainBackgroundColor)", 1)])
+_design_edit("auth-code", "AuthorizationUI/Sources/AuthorizationSequenceCodeEntryControllerNode.swift", [
+    ("        self.backgroundColor = self.theme.list.plainBackgroundColor", "        self.backgroundColor = GfpramBackdrop.authColor(fallback: self.theme.list.plainBackgroundColor)", 1)])
+_design_edit("auth-root", "AuthorizationUI/Sources/AuthorizationSequenceController.swift", [
+    ("        self.view.backgroundColor = self.presentationData.theme.list.plainBackgroundColor", "        self.view.backgroundColor = GfpramBackdrop.authColor(fallback: self.presentationData.theme.list.plainBackgroundColor)", 1)])
 
 # Плавность: файл с нажатиями живёт в Display (его видят и ChatListUI, и SettingsUI)
 def _motion_setup():
@@ -314,6 +370,7 @@ def _motion_setup():
         shutil.copy(os.path.join(here, "GfpramMotion.swift"), os.path.join(_disp, "GfpramMotion.swift"))
         shutil.copy(os.path.join(here, "GfpramBackground.swift"), os.path.join(_disp, "GfpramBackground.swift"))
         shutil.copy(os.path.join(here, "GfpramSkin.swift"), os.path.join(_disp, "GfpramSkin.swift"))
+        shutil.copy(os.path.join(here, "GfpramBackdrop.swift"), os.path.join(_disp, "GfpramBackdrop.swift"))
         print("OK   GfpramMotion.swift added to Display")
     else:
         print("MISSING gfp-motion: Display/Source не найден или отключён, плавность не добавлена")
