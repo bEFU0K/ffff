@@ -13,7 +13,7 @@ on:
         description: "Если у раннера Xcode старше 27, а Telegram-iOS уже использует API iOS 27 (reservedRegions), откатить Telegram-iOS на коммит перед этим (true/false)"
         default: "true"
       disable:
-        description: "Патчи для отключения (через запятую): ghost-read,ghost-typing,ghost-online,ghost-stories,keep-deleted,edit-history,hide-ads,allow-copy,ghost-screenshot,ghost-consume,keep-cleared,keep-selfdestruct,group-fallback,profile-info,branding-name,branding-icon,owner-hash,forward-copy,more-accounts,gfp-context-menu,gfp-account-info,gfp-gifts"
+        description: "Патчи для отключения (через запятую): ghost-read,ghost-typing,ghost-online,ghost-stories,keep-deleted,edit-history,hide-ads,allow-copy,ghost-screenshot,ghost-consume,keep-cleared,keep-selfdestruct,group-fallback,profile-info,branding-name,branding-icon,owner-hash,forward-copy,more-accounts,gfp-context-menu,gfp-account-info,gfp-gifts,theme-dark,theme-day,auth-phone,auth-code,auth-root"
         default: "profile-info"
 
 jobs:
