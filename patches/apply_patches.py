@@ -387,6 +387,7 @@ _design_edit("theme-dark", "TelegramPresentationData/Sources/DefaultDarkPresenta
     ("topColor: UIColor(rgb: 0x7CD636), bottomColor: UIColor(rgb: 0x26B470)", "topColor: UIColor(rgb: 0xff9a44), bottomColor: UIColor(rgb: 0xff5fa2)", 1),
     # пузыри: входящий как карточка, ссылки и акценты внутри пузыря светло-фиолетовые
     ("fill: [UIColor(rgb: 0x1D1D1D, alpha: incomingBubbleAlpha)],", "fill: [UIColor(rgb: 0x1c1c1e)],", 0),
+    ("let incomingBubbleAlpha: CGFloat = 0.9", "", 0),
     ("linkTextColor: UIColor(rgb: 0xffffff), linkHighlightColor: UIColor(rgb: 0xffffff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xffffff), accentControlColor: UIColor(rgb: 0xffffff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xffffff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.4)",
      "linkTextColor: UIColor(rgb: 0xb7a6ff), linkHighlightColor: UIColor(rgb: 0xb7a6ff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xb7a6ff), accentControlColor: UIColor(rgb: 0xb7a6ff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xb7a6ff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.4)", 1),
     ("infoLinkTextColor: UIColor(rgb: 0xffffff),", "infoLinkTextColor: UIColor(rgb: 0xb7a6ff),", 1),

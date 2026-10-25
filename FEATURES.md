@@ -1,4 +1,4 @@
-# GFPGRAM 2.5.1: исправлена ошибка сборки в GfpramBackground.swift (guard let на неопциональном UIWindow)
+# GFPGRAM 2.5.2: убрана неиспользуемая incomingBubbleAlpha (ошибка #no-usage в DefaultDarkPresentationTheme), исправлен guard в GfpramBackground
 
 # GFPGRAM 2.5: исправления
 
